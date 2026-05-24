@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InteractiveQuiz } from "@/components/InteractiveQuiz";
 import { Flashcards } from "@/components/Flashcards";
+import { SpeakingBuddy } from "@/components/SpeakingBuddy";
 import { useState } from "react";
 
 interface VideoMetadata {
@@ -248,6 +249,9 @@ export default function VideoDetailPage() {
                                     <TabsTrigger value="quiz" className="rounded-lg flex-1 min-w-[100px]" disabled={!metadata.quiz?.length}>
                                         آزمون ({metadata.quiz?.length || 0})
                                     </TabsTrigger>
+                                    <TabsTrigger value="speaking" className="rounded-lg flex-1 min-w-[100px]">
+                                        تمرین مکالمه 🎙️
+                                    </TabsTrigger>
                                 </TabsList>
 
                                 <TabsContent value="description" className="p-6">
@@ -448,6 +452,14 @@ export default function VideoDetailPage() {
                                             </div>
                                         )}
                                     </div>
+                                </TabsContent>
+
+                                <TabsContent value="speaking" className="p-6">
+                                    <SpeakingBuddy
+                                        phrases={metadata.phrases || []}
+                                        vocabulary={metadata.vocabulary || []}
+                                        level={video.level || "intermediate"}
+                                    />
                                 </TabsContent>
                             </Tabs>
                         </div>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Loader2, Lock, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion } from "framer-motion";
+import { DynamicWatermark } from '@/components/DynamicWatermark';
 
 interface SecureVideoPlayerProps {
     contentId: number;
@@ -46,6 +47,7 @@ export function SecureVideoPlayer({ contentId, poster }: SecureVideoPlayerProps)
     if (isPlaying) {
         return (
             <div className="w-full max-w-md mx-auto aspect-[9/16] bg-black rounded-2xl overflow-hidden relative shadow-2xl border border-white/5">
+                <DynamicWatermark interval={5000} opacity={0.22} />
                 <video
                     controls
                     autoPlay

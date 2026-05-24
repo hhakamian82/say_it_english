@@ -1447,6 +1447,158 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true });
     }
 
+    // ============ ADMIN: DIRECT S3 UPLOAD ============
+    // POST /api/admin/upload — Upload file to ArvanCloud S3 private bucket
+    // Returns { fileKey, publicUrl } for use in content creation form.
+    if (pathname === '/api/admin/upload' && method === 'POST') {
+      if (!currentUser || currentUser.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
+
+      const {
+        fileName,      // original file name
+        fileType,      // MIME type (e.g. "video/mp4")
+        fileSize,      // bytes
+        folder = 'videos', // 'videos' | 'audio' | 'images'
+      } = body;
+
+      if (!fileName || !fileType) {
+        return res.status(400).json({ error: "fileName and fileType are required" });
+      }
+
+      const AWS_ENDPOINT = process.env.ARVAN_S3_ENDPOINT || 'https://s3.ir-thr-at1.arvanstorage.ir';
+      const AWS_BUCKET   = process.env.ARVAN_S3_BUCKET || '';
+      const AWS_KEY      = process.env.ARVAN_S3_ACCESS_KEY || '';
+      const AWS_SECRET   = process.env.ARVAN_S3_SECRET_KEY || '';
+
+      if (!AWS_BUCKET || !AWS_KEY || !AWS_SECRET) {
+        return res.status(500).json({ error: "Storage credentials not configured. Set ARVAN_S3_ENDPOINT, ARVAN_S3_BUCKET, ARVAN_S3_ACCESS_KEY, ARVAN_S3_SECRET_KEY in env." });
+      }
+
+      try {
+        // Dynamically import to avoid bundling issues in edge
+        const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
+        const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
+
+        const s3 = new S3Client({
+          region: "ir-thr-at1",
+          endpoint: AWS_ENDPOINT,
+          credentials: { accessKeyId: AWS_KEY, secretAccessKey: AWS_SECRET },
+          forcePathStyle: true,
+        });
+
+        // Build a unique key: e.g. videos/2026-05-24_uuid_filename.mp4
+        const ext = fileName.split('.').pop() || 'bin';
+        const uuid = randomBytes(8).toString('hex');
+        const date = new Date().toISOString().split('T')[0];
+        const fileKey = `${folder}/${date}_${uuid}.${ext}`;
+
+        const command = new PutObjectCommand({
+          Bucket: AWS_BUCKET,
+          Key: fileKey,
+          ContentType: fileType,
+          ContentLength: fileSize ? parseInt(fileSize) : undefined,
+        });
+
+        // Generate a presigned PUT URL valid for 30 minutes
+        const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 1800 });
+
+        return res.status(200).json({
+          uploadUrl,          // PUT this URL directly from the browser
+          fileKey,            // Store in DB as content.fileKey
+          bucket: AWS_BUCKET,
+          endpoint: AWS_ENDPOINT,
+        });
+      } catch (err: any) {
+        console.error("[S3 UPLOAD ERROR]", err);
+        return res.status(500).json({ error: "Failed to generate upload URL", details: err.message });
+      }
+    }
+
+    // ============ AI: SPEAKING BUDDY ANALYSIS ============
+    // POST /api/ai/speaking — Analyse user's spoken audio for pronunciation & grammar
+    // Body: { transcribedText: string, targetPhrase?: string, level?: string }
+    // Returns structured feedback from Gemini
+    if (pathname === '/api/ai/speaking' && method === 'POST') {
+      if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
+
+      const { transcribedText, targetPhrase, level = 'intermediate' } = body;
+      if (!transcribedText || transcribedText.trim().length < 2) {
+        return res.status(400).json({ error: "transcribedText is required" });
+      }
+
+      const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+      if (!GEMINI_API_KEY) {
+        return res.status(500).json({ error: "AI service not configured. Set GEMINI_API_KEY in env." });
+      }
+
+      // Rate limit AI calls: max 10 per minute per user
+      if (!checkRateLimit(`ai:${currentUser.id}`, 10, 60000)) {
+        return res.status(429).json({ error: "Too many requests. Please wait a moment." });
+      }
+
+      const systemPrompt = `You are an expert American English pronunciation and grammar coach.
+Analyze the student's spoken English and provide concise, encouraging feedback in JSON format.
+The student's English level is: ${level}.
+${targetPhrase ? `Target phrase they were trying to say: "${targetPhrase}"` : ''}
+
+Respond ONLY with valid JSON in this exact structure:
+{
+  "overallScore": <number 0-100>,
+  "pronunciation": {
+    "score": <number 0-100>,
+    "issues": [<string>],
+    "tips": [<string>]
+  },
+  "grammar": {
+    "score": <number 0-100>,
+    "corrections": [{"original": "<string>", "corrected": "<string>", "explanation": "<string>"}]
+  },
+  "vocabulary": {
+    "goodWords": [<string>],
+    "suggestions": [{"replace": "<string>", "with": "<string>"}]
+  },
+  "encouragement": "<short motivational message in Persian>",
+  "nativeSuggestion": "<how a native speaker would naturally say this>"
+}`;
+
+      try {
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `Student said: "${transcribedText}"` }] }],
+              systemInstruction: { parts: [{ text: systemPrompt }] },
+              generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
+            }),
+          }
+        );
+
+        if (!geminiRes.ok) {
+          const errText = await geminiRes.text();
+          throw new Error(`Gemini API error: ${errText}`);
+        }
+
+        const geminiData = await geminiRes.json();
+        const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+        let feedback;
+        try {
+          feedback = JSON.parse(rawText);
+        } catch {
+          feedback = { overallScore: 0, encouragement: "تحلیل در دسترس نیست. دوباره امتحان کنید.", raw: rawText };
+        }
+
+        // Award XP for practicing speaking (5 XP per session)
+        await db.update(users).set({ xp: (currentUser.xp || 0) + 5 }).where(eq(users.id, currentUser.id));
+
+        return res.status(200).json({ ...feedback, xpEarned: 5 });
+      } catch (err: any) {
+        console.error("[AI SPEAKING ERROR]", err);
+        return res.status(500).json({ error: "AI analysis failed", details: err.message });
+      }
+    }
+
     // Default 404
     console.log(`[API 404] Method: ${method}, URL: ${req.url}, Path: ${pathname}`);
     return res.status(404).json({ error: 'Not Found' });

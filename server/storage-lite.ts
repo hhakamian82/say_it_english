@@ -220,7 +220,7 @@ export class LiteStorage {
       .leftJoin(content, eq(payments.contentId, content.id))
       .orderBy(desc(payments.createdAt));
     
-    return results.map(r => ({
+    return results.map((r: any) => ({
       ...r.payment,
       username: r.username,
       phone: r.phone,
@@ -256,7 +256,7 @@ export class LiteStorage {
       .where(eq(purchases.userId, userId));
     
     const distinctPurchases = new Map();
-    results.forEach(r => {
+    results.forEach((r: any) => {
       if (r.content && !distinctPurchases.has(r.purchase.contentId)) {
         distinctPurchases.set(r.purchase.contentId, {
           ...r.purchase,
@@ -274,8 +274,8 @@ export class LiteStorage {
   async getPaymentSettings(): Promise<{ bankCards: any[]; cryptoWallets: any[] }> {
     const db = await getDb();
     const settings = await db.select().from(paymentSettings);
-    const bankCardsRow = settings.find(s => s.key === "bank_cards");
-    const cryptoRow = settings.find(s => s.key === "crypto_wallets");
+    const bankCardsRow = settings.find((s: any) => s.key === "bank_cards");
+    const cryptoRow = settings.find((s: any) => s.key === "crypto_wallets");
     return {
       bankCards: (bankCardsRow?.value as any[]) || [],
       cryptoWallets: (cryptoRow?.value as any[]) || [],
@@ -326,7 +326,7 @@ export class LiteStorage {
     .orderBy(desc(reviews.createdAt));
 
     const total = result.length;
-    const avg = total > 0 ? result.reduce((acc, curr) => acc + curr.rating, 0) / total : 0;
+    const avg = total > 0 ? result.reduce((acc: number, curr: any) => acc + curr.rating, 0) / total : 0;
 
     return { reviews: result, stats: { total, avg } };
   }

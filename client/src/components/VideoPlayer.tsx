@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { DynamicWatermark } from '@/components/DynamicWatermark';
 
 interface VideoPlayerProps {
     // Primary source (Bunny/YouTube/Aparat for international)
@@ -140,6 +141,7 @@ export function VideoPlayer({
         return (
             <div className="aspect-video rounded-2xl overflow-hidden shadow-xl bg-black relative">
                 {isLoading && <LoadingOverlay />}
+                <DynamicWatermark />
                 <iframe
                     src={`https://www.aparat.com/video/video/embed/videohash/${activeVideoId}/vt/frame`}
                     title={title || "Aparat Video"}
@@ -164,6 +166,7 @@ export function VideoPlayer({
         return (
             <div className="aspect-video rounded-2xl overflow-hidden shadow-xl bg-black relative">
                 {isLoading && <LoadingOverlay />}
+                <DynamicWatermark />
                 <iframe
                     src={`https://www.youtube.com/embed/${ytId}`}
                     title={title || "YouTube Video"}
@@ -190,6 +193,7 @@ export function VideoPlayer({
         return (
             <div className="relative w-full max-w-md mx-auto rounded-2xl overflow-hidden shadow-2xl bg-black border border-white/10">
                 {isLoading && <LoadingOverlay />}
+                <DynamicWatermark />
                 <div className="aspect-[9/16]">
                     <iframe
                         src={embedUrl}
@@ -218,6 +222,7 @@ export function VideoPlayer({
         return (
             <div className="relative w-full max-w-md mx-auto rounded-2xl overflow-hidden shadow-2xl bg-black border border-white/10">
                 {isLoading && <LoadingOverlay />}
+                <DynamicWatermark />
                 <div className="aspect-[9/16]">
                     <iframe
                         src={embedUrl}
@@ -278,6 +283,7 @@ export function VideoPlayer({
     return (
         <div className="relative w-full max-w-md mx-auto rounded-2xl overflow-hidden shadow-xl bg-black border border-white/10">
             {isLoading && <LoadingOverlay />}
+            <DynamicWatermark />
             <div className="aspect-[9/16]">
                 <video
                     src={activeVideoId}
