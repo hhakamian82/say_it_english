@@ -35,6 +35,7 @@ const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Leaderboard = lazy(() => import("@/pages/Leaderboard"));
 const WeeklyChallenges = lazy(() => import("@/pages/WeeklyChallenges"));
 const Checkout = lazy(() => import("@/pages/Checkout"));
+const Chat = lazy(() => import("@/pages/Chat"));
 
 // Lazy load admin pages
 const AdminDashboard = lazy(() => import("@/pages/admin/dashboard"));
@@ -106,6 +107,7 @@ function Router() {
             <Route path="/challenges" component={WeeklyChallenges} />
             <Route path="/pricing" component={Pricing} />
             <Route path="/checkout" component={Checkout} />
+            <Route path="/chat" component={Chat} />
             <Route component={NotFound} />
           </Switch>
         </Suspense>

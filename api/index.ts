@@ -50,6 +50,10 @@ const passwordChangeSchema = z.object({
   newPassword: z.string().min(6),
 });
 
+const chatMessageSchema = z.object({
+  message: z.string().min(1).max(1000),
+});
+
 const paymentSubmitSchema = z.object({
   contentId: z.number().optional(),
   amount: z.number().optional(),
@@ -1596,6 +1600,68 @@ Respond ONLY with valid JSON in this exact structure:
       } catch (err: any) {
         console.error("[AI SPEAKING ERROR]", err);
         return res.status(500).json({ error: "AI analysis failed", details: err.message });
+      }
+    }
+
+    // ============ AI: SUPPORT CHAT (AvalAI) ============
+    // POST /api/chat — General site FAQ/support chat, public (no login required).
+    // Uses AvalAI's OpenAI-compatible gateway (https://api.avalai.ir/v1/chat/completions),
+    // which routes to GPT/Claude/Gemini depending on AVALAI_MODEL.
+    if (pathname === '/api/chat' && method === 'POST') {
+      const parsed = chatMessageSchema.safeParse(body);
+      if (!parsed.success) return res.status(400).json({ error: "پیام نامعتبر است" });
+      const { message } = parsed.data;
+
+      const ip = (req.headers['x-forwarded-for'] as string || 'unknown').split(',')[0].trim();
+      if (!checkRateLimit(`chat:${ip}`, 15, 60000)) {
+        return res.status(429).json({ error: "تعداد پیام‌ها بیش از حد مجاز. کمی صبر کنید." });
+      }
+
+      const AVALAI_API_KEY = process.env.AVALAI_API_KEY;
+      if (!AVALAI_API_KEY) {
+        return res.status(500).json({ error: "AI service not configured. Set AVALAI_API_KEY in env." });
+      }
+
+      const AVALAI_BASE_URL = process.env.AVALAI_BASE_URL || 'https://api.avalai.ir/v1';
+      // Exact model id string depends on your AvalAI plan/catalog (GPT/Claude/Gemini all
+      // go through this same endpoint) — set AVALAI_MODEL to override the default.
+      const AVALAI_MODEL = process.env.AVALAI_MODEL || 'gpt-4o-mini';
+
+      // Placeholder persona: real FAQ knowledge base isn't ready yet, so the assistant
+      // is instructed to admit that instead of guessing at answers.
+      const systemPrompt = `تو دستیار پشتیبانی سایت آموزش زبان انگلیسی "Say It English" هستی.
+پایگاه دانش سوالات متداول سایت هنوز کامل نشده. به هر سوالی که کاربر می‌پرسد، مودبانه و به فارسی بگو که در حال حاضر داری اطلاعات کامل رو یاد می‌گیری و به‌زودی می‌تونی کامل‌تر کمک کنی. حدس نزن و اطلاعات نادرست یا ساختگی درباره دوره‌ها، قیمت‌ها یا محتوای سایت ارائه نده.`;
+
+      try {
+        const avalRes = await fetch(`${AVALAI_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${AVALAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: AVALAI_MODEL,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: message },
+            ],
+            temperature: 0.4,
+          }),
+        });
+
+        if (!avalRes.ok) {
+          const errText = await avalRes.text();
+          throw new Error(`AvalAI API error (${avalRes.status}): ${errText}`);
+        }
+
+        const avalData = await avalRes.json();
+        const reply = avalData?.choices?.[0]?.message?.content
+          || 'دارم اطلاعات کامل رو یاد می‌گیرم، به‌زودی می‌تونم بهتر کمکت کنم!';
+
+        return res.status(200).json({ reply });
+      } catch (err: any) {
+        console.error("[CHAT ERROR]", err);
+        return res.status(500).json({ error: "پاسخ‌گویی چت با خطا مواجه شد", details: err.message });
       }
     }
 
