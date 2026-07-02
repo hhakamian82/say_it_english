@@ -98,6 +98,8 @@ export default function Chat() {
                     {msg.role === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                   </div>
                   <div
+                    dir="auto"
+                    style={{ unicodeBidi: "plaintext" }}
                     className={`rounded-2xl px-4 py-2.5 max-w-[80%] text-sm leading-6 ${
                       msg.role === "user"
                         ? "bg-primary text-white rounded-tr-sm"

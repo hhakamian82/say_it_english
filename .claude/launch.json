@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 5000
+    },
+    {
+      "name": "prod-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-s", "-l", "4321", "dist/public"],
+      "port": 4321
     }
   ]
 }
