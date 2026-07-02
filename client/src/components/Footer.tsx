@@ -1,10 +1,13 @@
 import { Link } from "wouter";
 import { Facebook, Instagram, Twitter, Mail, Phone, MapPin, Youtube } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { format as formatJalali } from "date-fns-jalali";
 
 export function Footer() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.dir() === 'rtl';
+  // fa uses the Jalali year (matches how dates are shown elsewhere in the app), en uses Gregorian
+  const copyrightYear = i18n.language === 'fa' ? formatJalali(new Date(), 'yyyy') : new Date().getFullYear();
 
   return (
     <footer className="bg-background border-t border-border mt-auto pt-16 pb-8">
@@ -28,12 +31,15 @@ export function Footer() {
               <a href="https://www.youtube.com/@say.it.english" target="_blank" rel="noopener noreferrer" className="p-2 bg-background border border-border rounded-full hover:border-red-500 hover:text-red-500 transition-colors">
                 <Youtube className="h-5 w-5" />
               </a>
+              {/* TODO: placeholder — replace with the real Instagram URL */}
               <a href="#" className="p-2 bg-background border border-border rounded-full hover:border-primary hover:text-primary transition-colors">
                 <Instagram className="h-5 w-5" />
               </a>
+              {/* TODO: placeholder — replace with the real Twitter/X URL */}
               <a href="#" className="p-2 bg-background border border-border rounded-full hover:border-primary hover:text-primary transition-colors">
                 <Twitter className="h-5 w-5" />
               </a>
+              {/* TODO: placeholder — replace with the real Facebook URL */}
               <a href="#" className="p-2 bg-background border border-border rounded-full hover:border-primary hover:text-primary transition-colors">
                 <Facebook className="h-5 w-5" />
               </a>
@@ -62,14 +68,17 @@ export function Footer() {
           <div className="space-y-4">
             <h3 className="font-bold text-lg">{t('footer.contactUs')}</h3>
             <ul className="space-y-3">
+              {/* TODO: placeholder — replace with the real support email */}
               <li className="flex items-center gap-3 text-muted-foreground text-sm">
                 <Mail className="h-5 w-5 text-primary shrink-0" />
                 <span dir="ltr">info@language-teacher.com</span>
               </li>
+              {/* TODO: placeholder — replace with the real phone number */}
               <li className="flex items-center gap-3 text-muted-foreground text-sm">
                 <Phone className="h-5 w-5 text-primary shrink-0" />
                 <span dir="ltr">+98 21 1234 5678</span>
               </li>
+              {/* TODO: placeholder — replace with the real address (footer.address in locale files) */}
               <li className="flex items-center gap-3 text-muted-foreground text-sm">
                 <MapPin className="h-5 w-5 text-primary shrink-0" />
                 <span>{t('footer.address')}</span>
@@ -79,7 +88,7 @@ export function Footer() {
         </div>
 
         <div className="border-t border-border mt-12 pt-8 text-center text-sm text-muted-foreground">
-          <p>{t('footer.copyright')}</p>
+          <p>{t('footer.copyright', { year: copyrightYear })}</p>
         </div>
       </div>
     </footer>

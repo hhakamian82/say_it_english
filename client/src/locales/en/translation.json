@@ -107,7 +107,7 @@
         "quickLinks": "Quick Links",
         "contactUs": "Contact Us",
         "address": "Enghelab Square, Tehran",
-        "copyright": "© 2024 All rights reserved.",
+        "copyright": "© {{year}} All rights reserved.",
         "links": {
             "home": "Home",
             "placement": "Placement Test",
