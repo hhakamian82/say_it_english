@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-// import { type InsertUser } from "@shared/schema";
-// loose type to fix build
-type InsertUser = any;
+// Type-only import — erased at compile time, so it can never pull drizzle-zod's runtime
+// code into the client bundle (that was the actual cause of the earlier Vercel crash;
+// see MANA_MEMORY.md). Safe to use real types here instead of `any`.
+import type { InsertUser } from "@shared/schema";
 import { useLocation } from "wouter";
 
 export function useAuth() {

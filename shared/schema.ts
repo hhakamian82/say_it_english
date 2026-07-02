@@ -1,6 +1,4 @@
 import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -155,19 +153,6 @@ export const reviews = pgTable("reviews", {
   isApproved: boolean("is_approved").default(true), // Admin can hide reviews
   createdAt: timestamp("created_at").defaultNow(),
 });
-
-// Insert Schemas (Commented out temporarily to debug Vercel runtime issue)
-/*
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
-export const insertContentSchema = createInsertSchema(content).omit({ id: true, createdAt: true });
-export const insertTimeSlotSchema = createInsertSchema(timeSlots).omit({ id: true, createdAt: true, isBooked: true });
-export const insertBookingSchema = createInsertSchema(bookings).omit({ id: true, createdAt: true, status: true });
-export const insertClassSchema = createInsertSchema(classes).omit({ id: true, createdAt: true });
-export const insertEnrollmentSchema = createInsertSchema(enrollments).omit({ id: true, createdAt: true, status: true });
-export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true, createdAt: true, status: true, notes: true });
-export const insertPurchaseSchema = createInsertSchema(purchases).omit({ id: true, createdAt: true });
-export const insertReviewSchema = createInsertSchema(reviews).omit({ id: true, createdAt: true, isApproved: true });
-*/
 
 // Types
 export type User = typeof users.$inferSelect;
