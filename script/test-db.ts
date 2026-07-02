@@ -1,4 +1,4 @@
-
+import "dotenv/config";
 import { pool } from "../server/db";
 
 async function test() {

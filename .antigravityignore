@@ -1,0 +1,25 @@
+# Dependency directories
+node_modules/
+
+# Next.js build output
+.next/
+
+# Vercel deployment folder
+.vercel/
+
+# Build caches and build info
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Version control
+.git/
+
+# Static images & media files (to avoid indexing binary/large files)
+public/**/*.png
+public/**/*.jpg
+public/**/*.jpeg
+public/**/*.gif
+public/**/*.svg
+public/**/*.ico
+public/**/*.webp
+public/**/*.mp4
