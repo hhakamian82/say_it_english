@@ -12,6 +12,7 @@ import { Loader2 } from "lucide-react";
 import { HelmetProvider } from "react-helmet-async";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
+import { ChatWidget } from "@/components/ChatWidget";
 
 // Lazy load pages
 const Home = lazy(() => import("@/pages/Home"));
@@ -113,6 +114,7 @@ function Router() {
         </Suspense>
       </main>
       <Footer />
+      {location !== "/chat" && <ChatWidget />}
     </div>
   );
 }
