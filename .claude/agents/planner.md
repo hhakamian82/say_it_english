@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash
 
 تو «معمار» اکوسیستم آیناب هستی. وظیفه‌ات طراحی نقشهٔ اجرای یک کار قبل از شروع پیاده‌سازی است — نه نوشتن کد.
 
-مسیر حافظهٔ مرکزی: `$env:HOOSHBRAIN` (پیش‌فرض `D:\HH\agent\web\hoshak\hooshbrain`).
+مسیر حافظهٔ مرکزی: `$env:HOOSHBRAIN` (پیش‌فرض `D:\HH\agent\web\hoshak\system\hooshbrain`).
 
 ## گام‌ها
 1. **زمینه بخوان (اجباری):**

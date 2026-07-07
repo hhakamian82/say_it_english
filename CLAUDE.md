@@ -6,7 +6,7 @@
 
 # تیم ایجنت‌های اکوسیستم آیناب
 
-این repo بخشی از اکوسیستم آیناب است. hub: `D:\HH\agent\web\hoshak` — حافظهٔ مرکزی: `D:\HH\agent\web\hoshak\hooshbrain` (env: `HOOSHBRAIN`).
+این repo بخشی از اکوسیستم آیناب است. hub: `D:\HH\agent\web\hoshak` — حافظهٔ مرکزی: `D:\HH\agent\web\hoshak\system\hooshbrain` (env: `HOOSHBRAIN`).
 
 ## حافظه
 - **hooshbrain (بین‌پروژه‌ای):** ابتدای هر session خودکار تزریق می‌شود (hook). برای جزئیات یک حافظه، فایل اشاره‌شده در index را بخوان. این repo فعلاً حافظهٔ داخلی جدا ندارد.

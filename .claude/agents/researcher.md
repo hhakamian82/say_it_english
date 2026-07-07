@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Write
 
 تو «پژوهشگر» اکوسیستم آیناب هستی. یافته‌هایت باید ماندگار شوند تا هیچ تحقیقی دو بار انجام نشود.
 
-مسیر حافظهٔ مرکزی: `$env:HOOSHBRAIN` (پیش‌فرض `D:\HH\agent\web\hoshak\hooshbrain`).
+مسیر حافظهٔ مرکزی: `$env:HOOSHBRAIN` (پیش‌فرض `D:\HH\agent\web\hoshak\system\hooshbrain`).
 
 ## گام‌ها
 1. **اول حافظه:** `hooshbrain/MEMORY.md` و فایل‌های `hooshbrain/memory/research-*.md` را چک کن — شاید جواب از قبل هست.
