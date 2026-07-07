@@ -2,6 +2,12 @@
 # stdout این hook مستقیم وارد context مدل می‌شود.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# pull خود ریپو (ADR-008 — گردش کار دو دستگاهی): ff-only، بدون prompt، بی‌صدا در حالت عادی
+$env:GIT_TERMINAL_PROMPT = '0'
+$pullOut = git pull --ff-only 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Output "⚠️ git pull این repo ناموفق بود — قبل از ادامه دستی بررسی کن" }
+elseif ("$pullOut" -notmatch 'Already up to date') { Write-Output "✅ repo با GitHub همگام شد (git pull)" }
+
 $hb = $env:HOOSHBRAIN
 if (-not $hb) { $hb = 'D:\HH\agent\web\hoshak\hooshbrain' }
 if (-not (Test-Path $hb)) { exit 0 }

@@ -9,7 +9,7 @@
           {
             "type": "command",
             "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/session_start.ps1",
-            "timeout": 30
+            "timeout": 60
           }
         ]
       }
