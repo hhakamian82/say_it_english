@@ -14,6 +14,7 @@ import {
     Wallet,
     Crown,
     Tag,
+    GraduationCap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
@@ -28,6 +29,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
         { name: "داشبورد", href: "/admin", icon: LayoutDashboard },
         { name: "مدیریت زمان‌ها", href: "/admin/slots", icon: Clock },
         { name: "مدیریت محتوا", href: "/admin/content", icon: BookOpen },
+        { name: "کلاس‌های گروهی", href: "/admin/classes", icon: GraduationCap },
         { name: "مدیریت کاربران", href: "/admin/users", icon: Users },
         { name: "مدیریت پرداخت‌ها", href: "/admin/payments", icon: CreditCard },
         { name: "تنظیمات پرداخت", href: "/admin/payment-settings", icon: Wallet },

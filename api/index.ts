@@ -56,9 +56,20 @@ const chatMessageSchema = z.object({
 
 const paymentSubmitSchema = z.object({
   contentId: z.number().optional(),
+  classId: z.number().optional(),
   amount: z.number().optional(),
   trackingCode: z.string().optional(),
   transactionHash: z.string().optional(),
+});
+
+const classUpsertSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(2000).nullish(),
+  level: z.string().min(1).max(50),
+  capacity: z.number().int().positive(),
+  price: z.number().int().nonnegative(),
+  schedule: z.string().min(1).max(200),
+  meetLink: z.string().max(500).nullish(),
 });
 
 // ============ RATE LIMITER ============
@@ -204,6 +215,7 @@ const payments = pgTable("payments", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(),
   contentId: integer("content_id"),
+  classId: integer("class_id"),
   amount: integer("amount").notNull(),
   status: text("status").default("pending"),
   gateway: text("gateway").default("zarinpal"),
@@ -348,6 +360,27 @@ const bookings = pgTable("bookings", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ============ GROUP CLASSES TABLES ============
+const classes = pgTable("classes", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description"),
+  level: text("level").notNull(),
+  capacity: integer("capacity").notNull(),
+  price: integer("price").notNull(),
+  schedule: text("schedule").notNull(),
+  meetLink: text("meet_link"), // Static Google Meet/Skyroom link, visible to enrolled students only
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+const enrollments = pgTable("enrollments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  classId: integer("class_id").notNull(),
+  status: text("status").default("enrolled"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // ============ SMS HELPER (Async) ============
 async function sendSMS(phone: string, message: string) {
   const apiKey = process.env.SMS_IR_API_KEY;
@@ -373,6 +406,79 @@ async function sendSMS(phone: string, message: string) {
   } catch (e) {
     console.error("SMS Error:", e);
   }
+}
+
+// ============ GROUP CLASS HELPERS ============
+function isOnlineClassPaymentEnabled(): boolean {
+  return process.env.ENABLE_ONLINE_CLASS_PAYMENT === 'true' && !!process.env.ZARINPAL_MERCHANT_ID;
+}
+
+// Best-effort SMS with the class meet link. Requires a dedicated approved template
+// on sms.ir (SMS_IR_CLASS_TEMPLATE_ID) with a "LINK" parameter; skipped silently otherwise.
+async function sendClassLinkSMS(phone: string, meetLink: string) {
+  const apiKey = process.env.SMS_IR_API_KEY;
+  const templateId = process.env.SMS_IR_CLASS_TEMPLATE_ID;
+  if (!apiKey || !templateId) return;
+  try {
+    const response = await fetch("https://api.sms.ir/v1/send/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
+      body: JSON.stringify({
+        mobile: phone,
+        templateId: parseInt(templateId),
+        parameters: [{ name: "LINK", value: meetLink }]
+      })
+    });
+    console.log("Class link SMS result:", await response.json());
+  } catch (e) {
+    console.error("Class link SMS error:", e);
+  }
+}
+
+// Single conditional INSERT: the WHERE guards capacity, the unique index
+// (uniq_enrollments_user_class) guards duplicates. No transaction needed.
+async function enrollIfCapacity(userId: number, classId: number): Promise<'enrolled' | 'already_enrolled' | 'full'> {
+  const result = await pool.query(
+    `INSERT INTO enrollments (user_id, class_id, status)
+     SELECT $1, $2, 'enrolled'
+     WHERE (SELECT COUNT(*) FROM enrollments WHERE class_id = $2)
+         < (SELECT capacity FROM classes WHERE id = $2)
+     ON CONFLICT (user_id, class_id) DO NOTHING
+     RETURNING id`,
+    [userId, classId]
+  );
+  if ((result.rowCount || 0) > 0) return 'enrolled';
+  const existing = await pool.query(
+    `SELECT 1 FROM enrollments WHERE user_id = $1 AND class_id = $2`,
+    [userId, classId]
+  );
+  return (existing.rowCount || 0) > 0 ? 'already_enrolled' : 'full';
+}
+
+// Enroll + notify. The in-app notification is the primary channel; SMS is best-effort.
+async function grantClassEnrollment(userId: number, classId: number): Promise<'enrolled' | 'already_enrolled' | 'full'> {
+  const outcome = await enrollIfCapacity(userId, classId);
+  if (outcome !== 'enrolled') return outcome;
+  try {
+    const clsRows = await db.select().from(classes).where(eq(classes.id, classId));
+    const cls = clsRows[0];
+    await db.insert(notifications).values({
+      userId,
+      type: 'achievement',
+      title: '🎉 ثبت‌نام تایید شد',
+      message: cls
+        ? `ثبت‌نام شما در کلاس «${cls.title}» تایید شد. لینک جلسه در بخش «کلاس‌های من» داشبورد در دسترس است.`
+        : 'ثبت‌نام شما در کلاس گروهی تایید شد. جزئیات در داشبورد.',
+      link: '/dashboard',
+    });
+    if (cls?.meetLink) {
+      const userRows = await db.select().from(users).where(eq(users.id, userId));
+      if (userRows[0]?.phone) await sendClassLinkSMS(userRows[0].phone, cls.meetLink);
+    }
+  } catch (e) {
+    console.error('[ENROLLMENT NOTIFY ERROR]', e);
+  }
+  return 'enrolled';
 }
 
 // ============ PASSWORD UTILS ============
@@ -434,6 +540,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const id = parseInt(idMatch![1]);
       const results = await db.select().from(content).where(eq(content.id, id));
       if (results.length === 0) return res.status(404).json({ error: "Content not found" });
+      // Storage keys stay server-side for non-admins; playback goes through /api/download
+      if (!currentUser || currentUser.role !== 'admin') {
+        const { fileKey, contentUrl, ...safeItem } = results[0];
+        return res.status(200).json(safeItem);
+      }
       return res.status(200).json(results[0]);
     }
 
@@ -477,13 +588,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             author,
             tags,
             created_at as "createdAt"
-          FROM content 
+          FROM content
           ORDER BY created_at DESC
         `);
+        // Storage keys stay server-side for non-admins; playback goes through /api/download
+        if (!currentUser || currentUser.role !== 'admin') {
+          return res.status(200).json(result.rows.map(({ fileKey, contentUrl, ...rest }) => rest));
+        }
         return res.status(200).json(result.rows);
       } catch (err: any) {
         console.error("Error fetching content:", err);
         return res.status(500).json({ error: "Failed to fetch content", details: err.message });
+      }
+    }
+
+    // --- SECURE DOWNLOAD / STREAM (presigned ArvanCloud URL, 1 hour) ---
+    // GET /api/download?id=<contentId>&stream=true — used by SecureVideoPlayer
+    if (pathname === '/api/download' && method === 'GET') {
+      if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
+      const idParam = url.searchParams.get('id');
+      const stream = url.searchParams.get('stream') === 'true';
+      const contentIdNum = parseInt(idParam || '');
+      if (!contentIdNum) return res.status(400).json({ error: "Invalid content id" });
+
+      const rows = await db.select().from(content).where(eq(content.id, contentIdNum));
+      if (rows.length === 0) return res.status(404).json({ error: "Content not found" });
+      const item = rows[0];
+
+      // Premium content requires a purchase (admins bypass) — parity with server/routes/content.ts
+      if (item.isPremium && currentUser.role !== 'admin') {
+        const owned = await db.select().from(purchases)
+          .where(and(eq(purchases.userId, currentUser.id), eq(purchases.contentId, contentIdNum)));
+        if (owned.length === 0) return res.status(403).json({ error: "برای دسترسی به این محتوا ابتدا آن را خریداری کنید" });
+      }
+
+      const fileKey = item.fileKey || item.videoId || item.contentUrl;
+      if (!fileKey) return res.status(400).json({ error: "این محتوا فایل قابل پخش/دانلود ندارد" });
+
+      const AWS_ENDPOINT = process.env.ARVAN_S3_ENDPOINT || 'https://s3.ir-thr-at1.arvanstorage.ir';
+      const AWS_BUCKET   = process.env.ARVAN_S3_BUCKET || '';
+      const AWS_KEY      = process.env.ARVAN_S3_ACCESS_KEY || '';
+      const AWS_SECRET   = process.env.ARVAN_S3_SECRET_KEY || '';
+      if (!AWS_BUCKET || !AWS_KEY || !AWS_SECRET) {
+        return res.status(500).json({ error: "Storage credentials not configured. Set ARVAN_S3_ENDPOINT, ARVAN_S3_BUCKET, ARVAN_S3_ACCESS_KEY, ARVAN_S3_SECRET_KEY in env." });
+      }
+
+      try {
+        const { S3Client, GetObjectCommand } = await import("@aws-sdk/client-s3");
+        const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
+
+        const s3 = new S3Client({
+          region: "ir-thr-at1",
+          endpoint: AWS_ENDPOINT,
+          credentials: { accessKeyId: AWS_KEY, secretAccessKey: AWS_SECRET },
+          forcePathStyle: true,
+        });
+
+        const downloadName = fileKey.split('/').pop() || 'download';
+        const command = new GetObjectCommand({
+          Bucket: AWS_BUCKET,
+          Key: fileKey,
+          ResponseContentDisposition: stream ? 'inline' : `attachment; filename="${downloadName}"`,
+        });
+
+        const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+        return res.redirect(302, signedUrl);
+      } catch (err: any) {
+        console.error("[S3 DOWNLOAD ERROR]", err);
+        return res.status(500).json({ error: "Failed to generate download link", details: err.message });
       }
     }
 
@@ -619,8 +791,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
       const parsed = paymentSubmitSchema.safeParse(body);
       if (!parsed.success) return res.status(400).json({ error: "اطلاعات پرداخت نامعتبر" });
-      const { contentId, amount, trackingCode, transactionHash } = parsed.data;
-      
+      const { contentId, classId, amount, trackingCode, transactionHash } = parsed.data;
+
+      // Group-class enrollment payment: price comes from the class, never the client
+      if (classId) {
+        const clsRows = await db.select().from(classes).where(eq(classes.id, classId));
+        if (clsRows.length === 0) return res.status(404).json({ error: "کلاس یافت نشد" });
+        const cls = clsRows[0];
+
+        const existing = await db.select().from(enrollments)
+          .where(and(eq(enrollments.userId, currentUser.id), eq(enrollments.classId, classId)));
+        if (existing.length > 0) return res.status(409).json({ error: "شما قبلاً در این کلاس ثبت‌نام کرده‌اید" });
+
+        const countResult = await pool.query(`SELECT COUNT(*)::int AS cnt FROM enrollments WHERE class_id = $1`, [classId]);
+        if (countResult.rows[0].cnt >= cls.capacity) {
+          return res.status(409).json({ error: "ظرفیت کلاس تکمیل شده است" });
+        }
+
+        const insertResults = await db.insert(payments).values({
+            userId: currentUser.id,
+            classId,
+            amount: cls.price,
+            status: 'pending',
+            trackingCode: trackingCode || transactionHash || 'N/A',
+        }).returning();
+
+        return res.status(200).json(insertResults[0]);
+      }
+
       const insertResults = await db.insert(payments).values({
           userId: currentUser.id,
           contentId: contentId || 0,
@@ -628,7 +826,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           status: 'pending',
           trackingCode: trackingCode || transactionHash || 'N/A',
       }).returning();
-      
+
       return res.status(200).json(insertResults[0]);
     }
 
@@ -653,10 +851,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const idMatch = pathname.match(/\/payments\/(\d+)\/status/);
       const paymentId = parseInt(idMatch![1]);
       const { status } = body;
-      
+
+      const existingRows = await db.select().from(payments).where(eq(payments.id, paymentId));
+      if (existingRows.length === 0) return res.status(404).json({ error: "Payment not found" });
+      if (existingRows[0].status === 'approved') {
+        // Already processed — avoid granting a second purchase/enrollment on a repeat click
+        return res.status(200).json(existingRows[0]);
+      }
+
       const results = await db.update(payments).set({ status }).where(eq(payments.id, paymentId)).returning();
       const updatedPayment = results[0];
-      
+
       if (updatedPayment && status === 'approved') {
           // Grant access!
           if (updatedPayment.contentId) {
@@ -665,9 +870,120 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 contentId: updatedPayment.contentId
             });
           }
+          if (updatedPayment.classId) {
+            const outcome = await grantClassEnrollment(updatedPayment.userId, updatedPayment.classId);
+            if (outcome === 'full') {
+              // Seat vanished between submission and approval — revert so the admin sees it
+              await db.update(payments).set({ status: 'pending' }).where(eq(payments.id, paymentId));
+              return res.status(409).json({ error: "ظرفیت کلاس تکمیل شده است؛ پرداخت به حالت در انتظار برگشت. با دانش‌آموز هماهنگ کنید." });
+            }
+          }
       }
-      
+
       return res.status(200).json(updatedPayment);
+    }
+
+    // ============ GROUP CLASSES ENDPOINTS ============
+
+    // --- PUBLIC: LIST CLASSES (no meet_link!) ---
+    if (pathname === '/api/classes' && method === 'GET') {
+      const result = await pool.query(`
+        SELECT c.id, c.title, c.description, c.level, c.capacity, c.price, c.schedule,
+               c.created_at as "createdAt",
+               COALESCE(e.cnt, 0)::int as "enrolled"
+        FROM classes c
+        LEFT JOIN (SELECT class_id, COUNT(*) as cnt FROM enrollments GROUP BY class_id) e
+          ON e.class_id = c.id
+        ORDER BY c.created_at DESC
+      `);
+      return res.status(200).json(result.rows);
+    }
+
+    // --- STUDENT: MY ENROLLED CLASSES (includes meet_link) ---
+    if (pathname === '/api/my-classes' && method === 'GET') {
+      if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
+      const result = await pool.query(`
+        SELECT c.id, c.title, c.description, c.level, c.schedule,
+               c.meet_link as "meetLink",
+               en.status, en.created_at as "enrolledAt"
+        FROM enrollments en
+        JOIN classes c ON c.id = en.class_id
+        WHERE en.user_id = $1
+        ORDER BY en.created_at DESC
+      `, [currentUser.id]);
+      return res.status(200).json(result.rows);
+    }
+
+    // --- PUBLIC: PAYMENT CONFIG (feature flags for the client) ---
+    if (pathname === '/api/payment/config' && method === 'GET') {
+      return res.status(200).json({ onlineClassPaymentEnabled: isOnlineClassPaymentEnabled() });
+    }
+
+    // --- ADMIN: LIST CLASSES (all fields) ---
+    if (pathname === '/api/admin/classes' && method === 'GET') {
+      if (!currentUser || currentUser.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
+      const result = await pool.query(`
+        SELECT c.id, c.title, c.description, c.level, c.capacity, c.price, c.schedule,
+               c.meet_link as "meetLink", c.created_at as "createdAt",
+               COALESCE(e.cnt, 0)::int as "enrolled"
+        FROM classes c
+        LEFT JOIN (SELECT class_id, COUNT(*) as cnt FROM enrollments GROUP BY class_id) e
+          ON e.class_id = c.id
+        ORDER BY c.created_at DESC
+      `);
+      return res.status(200).json(result.rows);
+    }
+
+    // --- ADMIN: CREATE CLASS ---
+    if (pathname === '/api/admin/classes' && method === 'POST') {
+      if (!currentUser || currentUser.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
+      const parsed = classUpsertSchema.safeParse(body);
+      if (!parsed.success) return res.status(400).json({ error: "اطلاعات کلاس نامعتبر", details: parsed.error.flatten() });
+      const results = await db.insert(classes).values(parsed.data).returning();
+      return res.status(201).json(results[0]);
+    }
+
+    // --- ADMIN: UPDATE CLASS ---
+    if (pathname.match(/\/api\/admin\/classes\/\d+$/) && method === 'PATCH') {
+      if (!currentUser || currentUser.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
+      const idMatch = pathname.match(/\/api\/admin\/classes\/(\d+)$/);
+      const classId = parseInt(idMatch![1]);
+      const parsed = classUpsertSchema.partial().safeParse(body);
+      if (!parsed.success) return res.status(400).json({ error: "اطلاعات کلاس نامعتبر", details: parsed.error.flatten() });
+      const results = await db.update(classes).set(parsed.data).where(eq(classes.id, classId)).returning();
+      if (results.length === 0) return res.status(404).json({ error: "کلاس یافت نشد" });
+      return res.status(200).json(results[0]);
+    }
+
+    // --- ADMIN: DELETE CLASS (blocked while students are enrolled) ---
+    if (pathname.match(/\/api\/admin\/classes\/\d+$/) && method === 'DELETE') {
+      if (!currentUser || currentUser.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
+      const idMatch = pathname.match(/\/api\/admin\/classes\/(\d+)$/);
+      const classId = parseInt(idMatch![1]);
+      const enrolled = await pool.query(`SELECT COUNT(*)::int AS cnt FROM enrollments WHERE class_id = $1`, [classId]);
+      if (enrolled.rows[0].cnt > 0) {
+        return res.status(409).json({ error: "این کلاس ثبت‌نام فعال دارد و قابل حذف نیست" });
+      }
+      const results = await db.delete(classes).where(eq(classes.id, classId)).returning();
+      if (results.length === 0) return res.status(404).json({ error: "کلاس یافت نشد" });
+      return res.status(200).json({ success: true });
+    }
+
+    // --- ADMIN: CLASS ENROLLMENT LIST ---
+    if (pathname.match(/\/api\/admin\/classes\/\d+\/enrollments$/) && method === 'GET') {
+      if (!currentUser || currentUser.role !== 'admin') return res.status(403).json({ error: "Forbidden" });
+      const idMatch = pathname.match(/\/api\/admin\/classes\/(\d+)\/enrollments$/);
+      const classId = parseInt(idMatch![1]);
+      const result = await pool.query(`
+        SELECT en.id, en.status, en.created_at as "enrolledAt",
+               u.id as "userId", u.username, u.phone,
+               u.first_name as "firstName", u.last_name as "lastName"
+        FROM enrollments en
+        JOIN users u ON u.id = en.user_id
+        WHERE en.class_id = $1
+        ORDER BY en.created_at DESC
+      `, [classId]);
+      return res.status(200).json(result.rows);
     }
 
     // ============ BOOKING SYSTEM ENDPOINTS ============
@@ -1144,19 +1460,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // --- PAYMENT: Request (Real ZarinPal) ---
     if (pathname.match(/\/api\/payment\/request$/) && method === 'POST') {
       if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
-      const { planId, promoCode } = body;
+      const { planId, promoCode, classId } = body;
 
-      // Calculate price (in Toman)
-      const plans: Record<string, number> = { 'bronze': 99000, 'silver': 249000, 'gold': 890000 };
-      let amount = plans[planId];
-      if (!amount) return res.status(400).json({ error: "Plan invalid" });
+      let amount: number;
+      let description: string;
+      let callbackParams: string;
+      let referenceSeed: string;
+      let paymentClassId: number | null = null;
 
-      // Apply promo
-      if (promoCode) {
-        const promo = await db.select().from(promoCodes).where(eq(promoCodes.code, promoCode));
-        if (promo.length > 0 && promo[0].isActive) {
-          amount = Math.round(amount * (1 - promo[0].discountPercent / 100));
+      if (classId) {
+        // Group-class enrollment via gateway — gated behind ENABLE_ONLINE_CLASS_PAYMENT
+        if (!isOnlineClassPaymentEnabled()) {
+          return res.status(403).json({ error: "پرداخت آنلاین کلاس فعلاً غیرفعال است" });
         }
+        const parsedClassId = parseInt(String(classId));
+        if (!parsedClassId) return res.status(400).json({ error: "کلاس نامعتبر" });
+
+        const clsRows = await db.select().from(classes).where(eq(classes.id, parsedClassId));
+        if (clsRows.length === 0) return res.status(404).json({ error: "کلاس یافت نشد" });
+        const cls = clsRows[0];
+
+        const existing = await db.select().from(enrollments)
+          .where(and(eq(enrollments.userId, currentUser.id), eq(enrollments.classId, parsedClassId)));
+        if (existing.length > 0) return res.status(409).json({ error: "شما قبلاً در این کلاس ثبت‌نام کرده‌اید" });
+
+        const countResult = await pool.query(`SELECT COUNT(*)::int AS cnt FROM enrollments WHERE class_id = $1`, [parsedClassId]);
+        if (countResult.rows[0].cnt >= cls.capacity) {
+          return res.status(409).json({ error: "ظرفیت کلاس تکمیل شده است" });
+        }
+
+        amount = cls.price;
+        description = `ثبت‌نام کلاس ${cls.title} - Say It English`;
+        callbackParams = `type=class&classId=${parsedClassId}`;
+        referenceSeed = `CLASS-${parsedClassId}-${Date.now()}`;
+        paymentClassId = parsedClassId;
+      } else {
+        // Subscription plan purchase (in Toman)
+        const plans: Record<string, number> = { 'bronze': 99000, 'silver': 249000, 'gold': 890000 };
+        amount = plans[planId];
+        if (!amount) return res.status(400).json({ error: "Plan invalid" });
+
+        // Apply promo
+        if (promoCode) {
+          const promo = await db.select().from(promoCodes).where(eq(promoCodes.code, promoCode));
+          if (promo.length > 0 && promo[0].isActive) {
+            amount = Math.round(amount * (1 - promo[0].discountPercent / 100));
+          }
+        }
+        description = `خرید پلن ${planId} - Say It English`;
+        callbackParams = `planId=${planId}`;
+        referenceSeed = `PLAN-${planId}-${Date.now()}`;
       }
 
       const ZARINPAL_MERCHANT_ID = process.env.ZARINPAL_MERCHANT_ID;
@@ -1170,14 +1523,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Create payment record (pending) first so we have an id for the callback_url
       const payment = await db.insert(payments).values({
         userId: currentUser.id,
+        classId: paymentClassId,
         amount,
         status: 'pending',
         gateway: 'zarinpal',
-        referenceId: `PLAN-${planId}-${Date.now()}`, // Temporary ref, overwritten below/after verify
+        referenceId: referenceSeed, // Temporary ref, overwritten below/after verify
       }).returning();
 
       const origin = req.headers.origin || `https://${req.headers.host}`;
-      const callbackUrl = `${origin}/api/payment/verify?planId=${planId}&paymentId=${payment[0].id}`;
+      const callbackUrl = `${origin}/api/payment/verify?${callbackParams}&paymentId=${payment[0].id}`;
 
       try {
         const zpRes = await fetch(`${ZARINPAL_API_BASE}/pg/v4/payment/request.json`, {
@@ -1188,7 +1542,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             amount,
             currency: 'IRT', // amounts in this app are in Toman
             callback_url: callbackUrl,
-            description: `خرید پلن ${planId} - Say It English`,
+            description,
             metadata: currentUser.phone ? { mobile: currentUser.phone } : undefined,
           }),
         });
@@ -1217,10 +1571,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const url = new URL(req.url!, `http://${req.headers.host}`);
       const authority = url.searchParams.get('Authority');
       const status = url.searchParams.get('Status');
+      const type = url.searchParams.get('type'); // 'class' for group-class enrollment, else subscription plan
       const planId = url.searchParams.get('planId');
+      const classIdParam = url.searchParams.get('classId');
       const paymentIdParam = url.searchParams.get('paymentId');
+      // Only used for the cheap pre-fetch sanity check below — the actual authorization
+      // decision uses the payment record's own classId once it's loaded (see below).
+      const requestedClassPayment = type === 'class';
 
-      if (!authority || status !== 'OK' || !planId || !paymentIdParam) {
+      if (!authority || status !== 'OK' || !paymentIdParam || (requestedClassPayment ? !classIdParam : !planId)) {
         return res.redirect('/payment/failed');
       }
 
@@ -1229,8 +1588,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (paymentRows.length === 0) return res.redirect('/payment/failed');
       const payment = paymentRows;
 
+      // Authoritative: what this payment record was actually created for, not the
+      // client-supplied query params (which could be tampered with to enroll in a
+      // different, more expensive class than the one actually paid for).
+      const verifiedClassId = payment[0].classId;
+      const isClassPayment = verifiedClassId != null;
+
       if (payment[0].status === 'approved') {
-         return res.redirect('/dashboard?payment=success');
+         return res.redirect(isClassPayment ? '/dashboard?enrollment=success' : '/dashboard?payment=success');
       }
 
       const ZARINPAL_MERCHANT_ID = process.env.ZARINPAL_MERCHANT_ID;
@@ -1267,6 +1632,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await db.update(payments).set({ status: 'approved', referenceId: zpData.data.ref_id?.toString() || authority })
         .where(eq(payments.id, paymentId));
 
+      // Group-class enrollment
+      if (isClassPayment) {
+        const outcome = await grantClassEnrollment(payment[0].userId, verifiedClassId!);
+        if (outcome === 'full') {
+          // Paid but the seat vanished between request and verify — flag for manual refund
+          try {
+            await db.insert(notifications).values({
+              userId: payment[0].userId,
+              type: 'info',
+              title: '⚠️ ظرفیت کلاس تکمیل شد',
+              message: 'پرداخت شما موفق بود اما ظرفیت کلاس پیش از تایید تکمیل شد. مبلغ بازگردانده می‌شود؛ پشتیبانی با شما تماس می‌گیرد.',
+              link: '/dashboard',
+            });
+            const admins = await db.select().from(users).where(eq(users.role, 'admin'));
+            for (const admin of admins) {
+              await db.insert(notifications).values({
+                userId: admin.id,
+                type: 'info',
+                title: '⚠️ نیاز به بازپرداخت',
+                message: `پرداخت #${paymentId} برای کلاس #${verifiedClassId} موفق بود اما ظرفیت تکمیل شده — بازپرداخت دستی لازم است.`,
+                link: '/admin/payments',
+              });
+            }
+          } catch (e) {
+            console.error('[CLASS FULL NOTIFY ERROR]', e);
+          }
+          return res.redirect('/dashboard?enrollment=full');
+        }
+        return res.redirect('/dashboard?enrollment=success');
+      }
+
       // Create Subscription
       const durationDays = planId === 'gold' ? 365 : (planId === 'silver' ? 90 : 30);
       const startDate = new Date();
@@ -1275,7 +1671,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       await db.insert(subscriptions).values({
         userId: payment[0].userId,
-        planId: planId,
+        planId: planId!, // non-null here: the class branch returned above, and the guard rejected missing planId
         status: 'active',
         startDate,
         endDate,

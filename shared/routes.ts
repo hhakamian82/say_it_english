@@ -168,6 +168,14 @@ export const api = {
         200: z.array(z.any()),
       },
     },
+    myClasses: {
+      method: 'GET' as const,
+      path: '/api/my-classes',
+      responses: {
+        200: z.array(z.any()),
+        401: errorSchemas.unauthorized,
+      },
+    },
   },
   users: {
     list: {

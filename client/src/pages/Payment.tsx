@@ -11,13 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, CreditCard, Copy, CheckCircle, ArrowRight, Coins, Hash } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SiBinance } from "react-icons/si";
-
-// Bank Card Info - Update this with actual card number
-const BANK_CARD = "6104-3379-6429-8218";
-const BANK_NAME = "بانک ملت";
-const CARD_HOLDER = "Say It English";
-const CRYPTO_WALLET = "0x2ca84105e9e3f3a91f0385acbd497923d743a342";
-const CRYPTO_NETWORK = "BEP20 (BNB Smart Chain)";
+import { BANK_CARD, BANK_NAME, CARD_HOLDER, CRYPTO_WALLET, CRYPTO_NETWORK } from "@/lib/manual-payment-info";
 
 interface Content {
     id: number;

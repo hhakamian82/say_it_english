@@ -4,6 +4,7 @@ import {
   timeSlots,
   bookings,
   classes,
+  enrollments,
   payments,
   purchases,
   paymentSettings,
@@ -16,6 +17,8 @@ import {
   type Booking,
   type InsertBooking,
   type Class,
+  type InsertClass,
+  type Enrollment,
   type Payment,
   type InsertPayment,
   type Purchase,
@@ -59,7 +62,14 @@ export interface IStorage {
   
   // Classes
   getClasses(): Promise<Class[]>;
-  
+  getClassesWithCounts(): Promise<any[]>;
+  getMyClasses(userId: number): Promise<any[]>;
+  createClass(cls: InsertClass): Promise<Class>;
+  updateClass(id: number, cls: Partial<InsertClass>): Promise<Class | undefined>;
+  deleteClass(id: number): Promise<boolean>;
+  getClassEnrollments(classId: number): Promise<any[]>;
+  enrollIfCapacity(userId: number, classId: number): Promise<'enrolled' | 'already_enrolled' | 'full'>;
+
   // Payments
   createPayment(payment: InsertPayment): Promise<Payment>;
   getPayments(): Promise<any[]>;
@@ -244,6 +254,80 @@ export class DatabaseStorage implements IStorage {
   // ===== Classes =====
   async getClasses(): Promise<Class[]> {
     return await db.select().from(classes);
+  }
+
+  async getClassesWithCounts(): Promise<any[]> {
+    const result = await pool.query(`
+      SELECT c.id, c.title, c.description, c.level, c.capacity, c.price, c.schedule,
+             c.created_at as "createdAt",
+             COALESCE(e.cnt, 0)::int as "enrolled"
+      FROM classes c
+      LEFT JOIN (SELECT class_id, COUNT(*) as cnt FROM enrollments GROUP BY class_id) e
+        ON e.class_id = c.id
+      ORDER BY c.created_at DESC
+    `);
+    return result.rows;
+  }
+
+  async getMyClasses(userId: number): Promise<any[]> {
+    const result = await pool.query(`
+      SELECT c.id, c.title, c.description, c.level, c.schedule,
+             c.meet_link as "meetLink",
+             en.status, en.created_at as "enrolledAt"
+      FROM enrollments en
+      JOIN classes c ON c.id = en.class_id
+      WHERE en.user_id = $1
+      ORDER BY en.created_at DESC
+    `, [userId]);
+    return result.rows;
+  }
+
+  async createClass(cls: InsertClass): Promise<Class> {
+    const [c] = await db.insert(classes).values(cls).returning();
+    return c;
+  }
+
+  async updateClass(id: number, cls: Partial<InsertClass>): Promise<Class | undefined> {
+    const [c] = await db.update(classes).set(cls).where(eq(classes.id, id)).returning();
+    return c;
+  }
+
+  async deleteClass(id: number): Promise<boolean> {
+    const [c] = await db.delete(classes).where(eq(classes.id, id)).returning();
+    return !!c;
+  }
+
+  async getClassEnrollments(classId: number): Promise<any[]> {
+    const result = await pool.query(`
+      SELECT en.id, en.status, en.created_at as "enrolledAt",
+             u.id as "userId", u.username, u.phone,
+             u.first_name as "firstName", u.last_name as "lastName"
+      FROM enrollments en
+      JOIN users u ON u.id = en.user_id
+      WHERE en.class_id = $1
+      ORDER BY en.created_at DESC
+    `, [classId]);
+    return result.rows;
+  }
+
+  // Single conditional INSERT: the WHERE guards capacity, the DB unique index
+  // (uniq_enrollments_user_class) guards duplicates. No transaction needed.
+  async enrollIfCapacity(userId: number, classId: number): Promise<'enrolled' | 'already_enrolled' | 'full'> {
+    const result = await pool.query(
+      `INSERT INTO enrollments (user_id, class_id, status)
+       SELECT $1, $2, 'enrolled'
+       WHERE (SELECT COUNT(*) FROM enrollments WHERE class_id = $2)
+           < (SELECT capacity FROM classes WHERE id = $2)
+       ON CONFLICT (user_id, class_id) DO NOTHING
+       RETURNING id`,
+      [userId, classId]
+    );
+    if ((result.rowCount || 0) > 0) return 'enrolled';
+    const existing = await pool.query(
+      `SELECT 1 FROM enrollments WHERE user_id = $1 AND class_id = $2`,
+      [userId, classId]
+    );
+    return (existing.rowCount || 0) > 0 ? 'already_enrolled' : 'full';
   }
 
   // ===== Payments =====

@@ -19,7 +19,9 @@ import {
     LogOut,
     Zap,
     Star,
-    Award
+    Award,
+    GraduationCap,
+    Video,
 } from "lucide-react";
 import { api } from "@shared/routes";
 import { useContent } from "@/hooks/use-content";
@@ -41,10 +43,37 @@ export default function Dashboard() {
                 duration: 5000,
                 className: "bg-green-500 text-white border-green-600",
             });
-            // Clear query param
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+        const enrollment = searchParams.get("enrollment");
+        if (enrollment === "success") {
+            toast({
+                title: "ثبت‌نام موفقیت‌آمیز بود! 🎉",
+                description: "کلاس شما فعال شد. لینک جلسه در بخش «کلاس‌های من» در دسترس است.",
+                duration: 5000,
+                className: "bg-green-500 text-white border-green-600",
+            });
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (enrollment === "full") {
+            toast({
+                title: "ظرفیت کلاس تکمیل شد",
+                description: "پرداخت شما موفق بود اما ظرفیت پیش از تایید تکمیل شد. پشتیبانی با شما تماس می‌گیرد.",
+                variant: "destructive",
+                duration: 8000,
+            });
             window.history.replaceState({}, document.title, window.location.pathname);
         }
     }, [toast]);
+
+    const { data: myClasses } = useQuery<any[]>({
+        queryKey: ["/api/my-classes"],
+        queryFn: async () => {
+            const res = await fetch("/api/my-classes", { credentials: "include" });
+            if (!res.ok) return [];
+            return res.json();
+        },
+        enabled: !!user,
+    });
 
     // Fetch user stats from new Phase 2 endpoint
     const { data: stats } = useQuery<any>({
@@ -261,6 +290,36 @@ export default function Dashboard() {
 
                     {/* Sidebar Area */}
                     <div className="lg:col-span-1 space-y-6">
+                        {/* My Classes */}
+                        {myClasses && myClasses.length > 0 && (
+                            <Card className="rounded-2xl border-none shadow-sm">
+                                <CardHeader>
+                                    <CardTitle className="text-lg flex items-center gap-2">
+                                        <GraduationCap className="w-5 h-5 text-primary" />
+                                        کلاس‌های من
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-3">
+                                    {myClasses.map((cls: any) => (
+                                        <div key={cls.id} className="p-3 bg-muted/40 rounded-xl border space-y-2">
+                                            <p className="font-bold text-sm">{cls.title}</p>
+                                            <p className="text-xs text-muted-foreground">{cls.schedule}</p>
+                                            {cls.meetLink ? (
+                                                <a href={cls.meetLink} target="_blank" rel="noopener noreferrer">
+                                                    <Button size="sm" className="w-full rounded-lg gap-2">
+                                                        <Video className="w-4 h-4" />
+                                                        ورود به کلاس
+                                                    </Button>
+                                                </a>
+                                            ) : (
+                                                <p className="text-xs text-amber-600 text-center py-1">لینک به‌زودی اضافه می‌شود</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                </CardContent>
+                            </Card>
+                        )}
+
                         {/* Badges Showcase */}
                         <Card className="rounded-2xl border-none shadow-sm">
                             <CardHeader>

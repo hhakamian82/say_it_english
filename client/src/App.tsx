@@ -29,6 +29,7 @@ const VideoDetailPage = lazy(() => import("@/pages/VideoDetail"));
 const Blog = lazy(() => import("@/pages/Blog"));
 const ArticleDetail = lazy(() => import("@/pages/ArticleDetail"));
 const PaymentPage = lazy(() => import("@/pages/Payment"));
+const ClassEnrollPage = lazy(() => import("@/pages/ClassEnroll"));
 const CourseDetail = lazy(() => import("@/pages/CourseDetail"));
 const Pricing = lazy(() => import("@/pages/Pricing"));
 const PaymentCheckout = lazy(() => import("@/pages/PaymentCheckout"));
@@ -47,6 +48,7 @@ const AdminSlots = lazy(() => import("@/pages/admin/slots"));
 const AdminPaymentSettings = lazy(() => import("@/pages/admin/payment-settings"));
 const AdminSubscriptions = lazy(() => import("@/pages/admin/subscriptions"));
 const AdminPromos = lazy(() => import("@/pages/admin/promos"));
+const AdminClasses = lazy(() => import("@/pages/admin/classes"));
 
 // Premium Loading Fallback
 function PageLoader() {
@@ -77,6 +79,7 @@ function Router() {
           <ProtectedRoute path="/admin/payment-settings" component={AdminPaymentSettings} shouldCheckAdmin={true} />
           <ProtectedRoute path="/admin/subscriptions" component={AdminSubscriptions} shouldCheckAdmin={true} />
           <ProtectedRoute path="/admin/promos" component={AdminPromos} shouldCheckAdmin={true} />
+          <ProtectedRoute path="/admin/classes" component={AdminClasses} shouldCheckAdmin={true} />
         </Switch>
       </Suspense>
     );
@@ -93,6 +96,7 @@ function Router() {
             <Route path="/content" component={ContentLibrary} />
             <Route path="/bookings" component={Bookings} />
             <Route path="/classes" component={Classes} />
+            <Route path="/classes/:id/enroll" component={ClassEnrollPage} />
             <Route path="/auth" component={AuthPage} />
             <Route path="/profile" component={Profile} />
             <Route path="/edit-profile" component={EditProfile} />

@@ -20,7 +20,8 @@ import { Card, CardContent } from "@/components/ui/card";
 interface Payment {
     id: number;
     userId: number;
-    contentId: number;
+    contentId: number | null;
+    classId: number | null;
     amount: number;
     trackingCode: string;
     status: string;
@@ -51,8 +52,9 @@ export default function AdminPayments() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ status }),
             });
-            if (!res.ok) throw new Error("Failed to update");
-            return await res.json();
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || "Failed to update");
+            return data;
         },
         onSuccess: (_, { status }) => {
             toast({
@@ -60,6 +62,10 @@ export default function AdminPayments() {
             });
             queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
             queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/admin/classes"] });
+        },
+        onError: (err: Error) => {
+            toast({ title: "خطا", description: err.message, variant: "destructive" });
         },
     });
 
@@ -265,8 +271,14 @@ export default function AdminPayments() {
                                             </TableCell>
                                             <TableCell>
                                                 <div className="flex flex-col">
-                                                    <span className="font-medium">{payment.contentTitle || `دوره #${payment.contentId}`}</span>
-                                                    <span className="text-[10px] text-muted-foreground">ID: {payment.contentId}</span>
+                                                    <span className="font-medium">
+                                                        {payment.classId
+                                                            ? `کلاس #${payment.classId}`
+                                                            : payment.contentTitle || `دوره #${payment.contentId}`}
+                                                    </span>
+                                                    <span className="text-[10px] text-muted-foreground">
+                                                        ID: {payment.classId ?? payment.contentId}
+                                                    </span>
                                                 </div>
                                             </TableCell>
                                             <TableCell className="font-bold text-green-600">

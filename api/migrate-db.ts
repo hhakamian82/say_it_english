@@ -41,7 +41,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
     `);
 
-    return res.status(200).json({ message: "Migration successful! Columns added and tables (payments, purchases) created." });
+    // Group classes (migrations/0008_group_classes.sql)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS classes (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        level TEXT NOT NULL,
+        capacity INTEGER NOT NULL,
+        price INTEGER NOT NULL,
+        schedule TEXT NOT NULL,
+        meet_link TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS enrollments (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        class_id INTEGER NOT NULL,
+        status TEXT DEFAULT 'enrolled',
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    await client.query(`ALTER TABLE classes ADD COLUMN IF NOT EXISTS meet_link TEXT;`);
+    await client.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS class_id INTEGER;`);
+    await client.query(`ALTER TABLE payments ALTER COLUMN content_id DROP NOT NULL;`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_enrollments_user_class ON enrollments(user_id, class_id);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_enrollments_class ON enrollments(class_id);`);
+
+    return res.status(200).json({ message: "Migration successful! Columns added and tables (payments, purchases, classes, enrollments) created." });
 
   } catch (err: any) {
     return res.status(500).json({ error: err.message, stack: err.stack });

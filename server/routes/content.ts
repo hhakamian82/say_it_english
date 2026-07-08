@@ -7,15 +7,23 @@ import { AuthenticatedRequest, isAdmin } from "../utils/auth";
 export const contentRouter = Router();
 
 // Content List
-contentRouter.get(api.content.list.path, async (req, res) => {
+contentRouter.get(api.content.list.path, async (req: AuthenticatedRequest, res) => {
   const content = await storage.getContent();
+  // Storage keys stay server-side for non-admins; playback goes through /api/download
+  if (!isAdmin(req)) {
+    return res.json(content.map(({ fileKey, contentUrl, ...rest }) => rest));
+  }
   res.json(content);
 });
 
 // Content Detail
-contentRouter.get("/api/content/:id", async (req, res) => {
+contentRouter.get("/api/content/:id", async (req: AuthenticatedRequest, res) => {
   const item = await storage.getContentById(parseInt(req.params.id));
   if (!item) return res.status(404).send("Content not found");
+  if (!isAdmin(req)) {
+    const { fileKey, contentUrl, ...safeItem } = item;
+    return res.json(safeItem);
+  }
   res.json(item);
 });
 

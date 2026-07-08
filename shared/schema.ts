@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -81,6 +81,7 @@ export const classes = pgTable("classes", {
   capacity: integer("capacity").notNull(),
   price: integer("price").notNull(),
   schedule: text("schedule").notNull(),
+  meetLink: text("meet_link"), // Static Google Meet/Skyroom link, visible to enrolled students only
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -90,13 +91,16 @@ export const enrollments = pgTable("enrollments", {
   classId: integer("class_id").notNull(),
   status: text("status").default("enrolled"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("uniq_enrollments_user_class").on(table.userId, table.classId),
+]);
 
 // Manual Payment Requests (Card-to-Card)
 export const payments = pgTable("payments", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(),
   contentId: integer("content_id"), // Optional: Null for subscription payments
+  classId: integer("class_id"), // Optional: set for group-class enrollment payments
   amount: integer("amount").notNull(), // Amount in Toman or equivalent
   paymentMethod: text("payment_method").default("card"), // 'card' or 'crypto'
   trackingCode: text("tracking_code"), // Bank transfer tracking code (for card)
