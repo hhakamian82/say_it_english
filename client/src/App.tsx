@@ -38,6 +38,7 @@ const Leaderboard = lazy(() => import("@/pages/Leaderboard"));
 const WeeklyChallenges = lazy(() => import("@/pages/WeeklyChallenges"));
 const Checkout = lazy(() => import("@/pages/Checkout"));
 const Chat = lazy(() => import("@/pages/Chat"));
+const IgDraft = lazy(() => import("@/pages/IgDraft"));
 
 // Lazy load admin pages
 const AdminDashboard = lazy(() => import("@/pages/admin/dashboard"));
@@ -113,6 +114,7 @@ function Router() {
             <Route path="/pricing" component={Pricing} />
             <Route path="/checkout" component={Checkout} />
             <Route path="/chat" component={Chat} />
+            <Route path="/ig-draft" component={IgDraft} />
             <Route component={NotFound} />
           </Switch>
         </Suspense>

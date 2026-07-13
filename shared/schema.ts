@@ -158,6 +158,21 @@ export const reviews = pgTable("reviews", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Instagram DM/comment reply drafts (HITL) — log of AI-generated drafts that the
+// teacher's wife reviews, edits, and sends manually from Instagram herself.
+// Kept as a plain log (never read back by the AI); later used to tune prompts.
+export const igDrafts = pgTable("ig_drafts", {
+  id: serial("id").primaryKey(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  inbound: text("inbound").notNull(), // پیام/کامنت دانش‌آموز که دستی paste شده
+  context: text("context"), // 'dm' | 'comment' | null
+  studentHandle: text("student_handle"), // آیدی اینستاگرام (اختیاری)
+  draft: text("draft").notNull(), // پاسخ تولیدشدهٔ AI
+  edited: text("edited"), // نسخهٔ ویرایش‌شدهٔ نهایی (در صورت بازنویسی)
+  sentStatus: text("sent_status").default("drafted").notNull(), // drafted | edited | sent | discarded
+  category: text("category"), // برچسب دستی برای سنجش بعدی: قیمت / تعیین سطح / ...
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
@@ -177,3 +192,5 @@ export type Purchase = typeof purchases.$inferSelect;
 export type InsertPurchase = typeof purchases.$inferInsert;
 export type Review = typeof reviews.$inferSelect;
 export type InsertReview = typeof reviews.$inferInsert;
+export type IgDraft = typeof igDrafts.$inferSelect;
+export type InsertIgDraft = typeof igDrafts.$inferInsert;
