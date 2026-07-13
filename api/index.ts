@@ -54,6 +54,17 @@ const chatMessageSchema = z.object({
   message: z.string().min(1).max(1000),
 });
 
+const igDraftInputSchema = z.object({
+  inbound: z.string().min(1).max(4000),
+  context: z.enum(['dm', 'comment']).optional(),
+  studentHandle: z.string().max(100).optional(),
+});
+
+const igDraftUpdateSchema = z.object({
+  edited: z.string().max(4000).optional(),
+  sentStatus: z.enum(['edited', 'sent', 'discarded']).optional(),
+});
+
 const paymentSubmitSchema = z.object({
   contentId: z.number().optional(),
   classId: z.number().optional(),
@@ -153,6 +164,21 @@ setInterval(() => {
     if (now > val.resetAt) rateLimitMap.delete(key);
   }
 }, 300000);
+
+// ============ IG DRAFT AUTH ============
+// Single shared secret (IG_DRAFT_TOKEN env) sent as "Authorization: Bearer <token>".
+// If the env var is missing the endpoint stays closed — never fail open (the
+// /api/content leak fixed in 1e619b2 is the cautionary tale here).
+function checkIgDraftAuth(req: VercelRequest): boolean {
+  const expected = process.env.IG_DRAFT_TOKEN;
+  if (!expected) return false;
+  const header = (req.headers['authorization'] as string) || '';
+  const provided = header.replace(/^Bearer\s+/i, '');
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  if (expectedBuf.length !== providedBuf.length) return false;
+  return timingSafeEqual(expectedBuf, providedBuf);
+}
 
 // ============ GLOBAL POOL (Isolated) ============
 // Defines a robust connection pool globally to be reused across requests
@@ -379,6 +405,19 @@ const enrollments = pgTable("enrollments", {
   classId: integer("class_id").notNull(),
   status: text("status").default("enrolled"),
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Instagram DM/comment reply drafts (HITL) — mirrors shared/schema.ts igDrafts
+const igDrafts = pgTable("ig_drafts", {
+  id: serial("id").primaryKey(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  inbound: text("inbound").notNull(),
+  context: text("context"), // 'dm' | 'comment' | null
+  studentHandle: text("student_handle"),
+  draft: text("draft").notNull(),
+  edited: text("edited"),
+  sentStatus: text("sent_status").default("drafted").notNull(), // drafted | edited | sent | discarded
+  category: text("category"),
 });
 
 // ============ SMS HELPER (Async) ============
@@ -2187,6 +2226,129 @@ Respond ONLY with valid JSON in this exact structure:
       } catch (err: any) {
         console.error("[CHAT ERROR]", err);
         return res.status(500).json({ error: "پاسخ‌گویی چت با خطا مواجه شد", details: err.message });
+      }
+    }
+
+    // ============ AI: INSTAGRAM DM DRAFTER (AvalAI, HITL) ============
+    // POST /api/ig/draft — private, token-gated tool for the teacher's wife: takes a
+    // student's Instagram DM/comment (pasted manually) and returns an AI draft reply.
+    // Nothing is ever sent to Instagram programmatically — she reviews, edits, and
+    // sends it herself (HITL, ADR-012). Requires IG_DRAFT_TOKEN; without the env set,
+    // the endpoint stays closed (401) so it can never accidentally go public.
+    if (pathname === '/api/ig/draft' && method === 'POST') {
+      if (!checkIgDraftAuth(req)) {
+        return res.status(401).json({ error: "احراز هویت نشد" });
+      }
+
+      const parsed = igDraftInputSchema.safeParse(body);
+      if (!parsed.success) return res.status(400).json({ error: "پیام ورودی نامعتبر است" });
+      const { inbound, context, studentHandle } = parsed.data;
+
+      // Single-user token — a static key is enough (looser than /api/chat's per-IP limit).
+      if (!(await checkRateLimit(`ig-draft:owner`, 30, 60000))) {
+        return res.status(429).json({ error: "تعداد درخواست‌ها بیش از حد مجاز. کمی صبر کنید." });
+      }
+
+      const AVALAI_API_KEY = process.env.AVALAI_API_KEY;
+      if (!AVALAI_API_KEY) {
+        return res.status(500).json({ error: "AI service not configured. Set AVALAI_API_KEY in env." });
+      }
+      const AVALAI_BASE_URL = process.env.AVALAI_BASE_URL || 'https://api.avalai.ir/v1';
+      const AVALAI_MODEL = process.env.AVALAI_MODEL || 'gpt-4o-mini';
+
+      // Tone/format rules come from .claude/agents/english-content.md (Instagram reply
+      // template): short, warm, Persian, clear CTA, and serious/financial questions get
+      // deferred to a human follow-up instead of an invented answer. Facts (plans,
+      // routes) mirror the /api/chat prompt above — keep the two in sync.
+      const systemPrompt = `تو به همسر آقای H (مدرس سایت آموزش زبان "Say It English") کمک می‌کنی تا به پیام‌ها و کامنت‌های اینستاگرام دانش‌آموزان و علاقه‌مندان پاسخ بدهد.
+
+خروجی تو یک «پیش‌نویس» است: او آن را می‌خواند، در صورت نیاز ویرایش می‌کند و خودش از اکانت اینستاگرام می‌فرستد. پس فقط متن نهایی و آمادهٔ ارسال را بنویس — بدون مقدمه، توضیح یا گزینه‌های متعدد.
+
+قواعد لحن و قالب:
+- همیشه فارسی، گرم، صمیمی و مودبانه — از زبان خود او (اول‌شخص)، کوتاه و مناسب اینستاگرام.
+- پیام‌های تکراری (قیمت، تعیین سطح، وضعیت ثبت‌نام کلاس) را کامل و شفاف جواب بده.
+- اگر سوال جدی/مالی/خاص است و پاسخ قطعی آن را نداری، صادقانه بنویس «بذار دقیق بررسی کنم و بهت خبر می‌دم» — هرگز قیمت، تاریخ، تخفیف یا امکاناتی که در اطلاعات زیر نیامده را از خودت نساز.
+- تخفیف یا قول قطعی نده مگر در متن ورودی صریحاً خواسته شده باشد.
+- فقط اگر به موضوع پیام مرتبط بود، در پایان یک دعوت ملایم به تعیین سطح رایگان (say-it-english صفحهٔ /placement) یا کلاس‌های گروهی (صفحهٔ /classes) اضافه کن.
+
+اطلاعات واقعی سایت:
+- پلن‌ها (صفحهٔ /pricing): برنزی ۹۹,۰۰۰ تومان / ۳۰ روز — تمام ویدیوها و آزمون‌های نامحدود؛ نقره‌ای ۲۴۹,۰۰۰ تومان / ۹۰ روز — برنزی + پشتیبانی اختصاصی؛ طلایی ۸۹۰,۰۰۰ تومان / ۳۶۵ روز — نقره‌ای + مشاورهٔ آنلاین. پرداخت آنلاین با زرین‌پال.
+- تست تعیین سطح رایگان: صفحهٔ /placement
+- کلاس‌های گروهی و ثبت‌نام: صفحهٔ /classes — زمان‌بندی و ظرفیت هر کلاس در همان صفحه است؛ عدد یا تاریخی خارج از آن نگو.
+- رزرو مشاوره یا کلاس خصوصی: صفحهٔ /bookings
+
+نوع پیام ورودی: ${context === 'comment' ? 'کامنت عمومی زیر پست' : 'دایرکت (DM)'}${studentHandle ? ` — از طرف ${studentHandle}` : ''}`;
+
+      try {
+        const avalRes = await fetch(`${AVALAI_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${AVALAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: AVALAI_MODEL,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: inbound },
+            ],
+            temperature: 0.5,
+          }),
+        });
+
+        if (!avalRes.ok) {
+          const errText = await avalRes.text();
+          throw new Error(`AvalAI API error (${avalRes.status}): ${errText}`);
+        }
+
+        const avalData = await avalRes.json();
+        const draft = avalData?.choices?.[0]?.message?.content;
+        if (!draft) {
+          return res.status(502).json({ error: "پیش‌نویس خالی برگشت — دوباره تلاش کنید." });
+        }
+
+        const [row] = await db.insert(igDrafts).values({
+          inbound,
+          context: context ?? null,
+          studentHandle: studentHandle ?? null,
+          draft,
+          sentStatus: 'drafted',
+        }).returning();
+
+        return res.status(200).json({ id: row.id, draft });
+      } catch (err: any) {
+        console.error("[IG DRAFT ERROR]", err);
+        return res.status(500).json({ error: "تولید پیش‌نویس با خطا مواجه شد", details: err.message });
+      }
+    }
+
+    // PATCH /api/ig/draft/:id — log the outcome of a draft (edited text / sent / discarded)
+    // so the drafts table becomes a usable dataset for prompt tuning later.
+    if (pathname.startsWith('/api/ig/draft/') && method === 'PATCH') {
+      if (!checkIgDraftAuth(req)) {
+        return res.status(401).json({ error: "احراز هویت نشد" });
+      }
+
+      const draftId = parseInt(pathname.slice('/api/ig/draft/'.length), 10);
+      if (isNaN(draftId)) return res.status(400).json({ error: "شناسه نامعتبر است" });
+
+      const parsed = igDraftUpdateSchema.safeParse(body);
+      if (!parsed.success || (parsed.data.edited === undefined && parsed.data.sentStatus === undefined)) {
+        return res.status(400).json({ error: "بدنهٔ درخواست نامعتبر است" });
+      }
+
+      try {
+        const updates: Record<string, any> = {};
+        if (parsed.data.edited !== undefined) updates.edited = parsed.data.edited;
+        if (parsed.data.sentStatus !== undefined) updates.sentStatus = parsed.data.sentStatus;
+
+        const [row] = await db.update(igDrafts).set(updates).where(eq(igDrafts.id, draftId)).returning();
+        if (!row) return res.status(404).json({ error: "پیش‌نویس پیدا نشد" });
+
+        return res.status(200).json(row);
+      } catch (err: any) {
+        console.error("[IG DRAFT PATCH ERROR]", err);
+        return res.status(500).json({ error: "ثبت وضعیت با خطا مواجه شد", details: err.message });
       }
     }
 

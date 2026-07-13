@@ -70,7 +70,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_enrollments_user_class ON enrollments(user_id, class_id);`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_enrollments_class ON enrollments(class_id);`);
 
-    return res.status(200).json({ message: "Migration successful! Columns added and tables (payments, purchases, classes, enrollments) created." });
+    // Instagram DM drafter (migrations/0009_ig_drafts.sql)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ig_drafts (
+        id SERIAL PRIMARY KEY,
+        created_at TIMESTAMP DEFAULT NOW() NOT NULL,
+        inbound TEXT NOT NULL,
+        context TEXT,
+        student_handle TEXT,
+        draft TEXT NOT NULL,
+        edited TEXT,
+        sent_status TEXT DEFAULT 'drafted' NOT NULL,
+        category TEXT
+      );
+    `);
+
+    return res.status(200).json({ message: "Migration successful! Columns added and tables (payments, purchases, classes, enrollments, ig_drafts) created." });
 
   } catch (err: any) {
     return res.status(500).json({ error: err.message, stack: err.stack });
