@@ -10,7 +10,7 @@ if (-not $fp) { exit 0 }
 if ($fp -match 'hooshbrain' -or $fp -match '\.claude') { exit 0 }
 
 $hb = $env:HOOSHBRAIN
-if (-not $hb) { $hb = 'D:\HH\agent\web\hoshak\system\hooshbrain' }
+if (-not $hb -or -not (Test-Path $hb)) { $d = (Get-Location).Path; while ($d -and -not (Test-Path (Join-Path $d 'system\hooshbrain'))) { $d = Split-Path $d -Parent }; if ($d) { $hb = Join-Path $d 'system\hooshbrain' } }
 $repo = Split-Path -Leaf (Get-Location)
 $dir = Join-Path $hb "bus\$repo"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null

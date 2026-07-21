@@ -7,7 +7,7 @@ try { $in = $raw | ConvertFrom-Json } catch { exit 0 }
 if ($in.stop_hook_active -eq $true) { exit 0 }
 
 $hb = $env:HOOSHBRAIN
-if (-not $hb) { $hb = 'D:\HH\agent\web\hoshak\system\hooshbrain' }
+if (-not $hb -or -not (Test-Path $hb)) { $d = (Get-Location).Path; while ($d -and -not (Test-Path (Join-Path $d 'system\hooshbrain'))) { $d = Split-Path $d -Parent }; if ($d) { $hb = Join-Path $d 'system\hooshbrain' } }
 $repo = Split-Path -Leaf (Get-Location)
 $log = Join-Path $hb "bus\$repo\pending_changes.log"
 if (-not (Test-Path $log)) { exit 0 }

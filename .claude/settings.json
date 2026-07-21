@@ -1,7 +1,4 @@
 {
-  "env": {
-    "HOOSHBRAIN": "D:\\HH\\agent\\web\\hoshak\\system\\hooshbrain"
-  },
   "hooks": {
     "SessionStart": [
       {

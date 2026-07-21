@@ -9,7 +9,7 @@ if ($LASTEXITCODE -ne 0) { Write-Output "⚠️ git pull این repo ناموف�
 elseif ("$pullOut" -notmatch 'Already up to date') { Write-Output "✅ repo با GitHub همگام شد (git pull)" }
 
 $hb = $env:HOOSHBRAIN
-if (-not $hb) { $hb = 'D:\HH\agent\web\hoshak\system\hooshbrain' }
+if (-not $hb -or -not (Test-Path $hb)) { $d = (Get-Location).Path; while ($d -and -not (Test-Path (Join-Path $d 'system\hooshbrain'))) { $d = Split-Path $d -Parent }; if ($d) { $hb = Join-Path $d 'system\hooshbrain' } }
 if (-not (Test-Path $hb)) { exit 0 }
 
 Write-Output '# hooshbrain — حافظهٔ مرکزی اکوسیستم آیناب (تزریق خودکار SessionStart)'
