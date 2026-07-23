@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { SEO } from "@/components/SEO";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,18 +31,21 @@ const PAYMENT_INFO = {
     }
 };
 
-const plans: Record<string, { name: string; price: number }> = {
-    bronze: { name: "پلن برنزی", price: 299000 },
-    silver: { name: "پلن نقره‌ای", price: 599000 },
-    gold: { name: "پلن طلایی", price: 1299000 },
-};
+interface Plan {
+    id: string;
+    name: string;
+    price: number;
+    durationDays: number;
+}
 
 export default function PaymentCheckout() {
     const [, navigate] = useLocation();
     const search = useSearch();
     const params = new URLSearchParams(search);
     const planId = params.get("plan") || "silver";
-    const plan = plans[planId] || plans.silver;
+    // Prices come from /api/payment/plans only — a local copy here had drifted from the server's
+    const { data: plans, isLoading } = useQuery<Plan[]>({ queryKey: ["/api/payment/plans"] });
+    const plan = plans?.find(p => p.id === planId);
 
     const [trackingCode, setTrackingCode] = useState("");
     const [paymentMethod, setPaymentMethod] = useState<"card" | "crypto">("card");
@@ -59,7 +62,7 @@ export default function PaymentCheckout() {
     };
 
     const submitPayment = useMutation({
-        mutationFn: async (data: { trackingCode: string; method: string; planId: string; amount: number }) => {
+        mutationFn: async (data: { trackingCode: string; planId: string }) => {
             const res = await fetch("/api/payments", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -90,13 +93,20 @@ export default function PaymentCheckout() {
             toast({ title: "خطا", description: "لطفاً کد پیگیری را وارد کنید.", variant: "destructive" });
             return;
         }
-        submitPayment.mutate({
-            trackingCode,
-            method: paymentMethod,
-            planId,
-            amount: plan.price,
-        });
+        // amount is intentionally not sent — the server prices the plan itself
+        submitPayment.mutate({ trackingCode, planId });
     };
+
+    if (isLoading) return <div className="flex justify-center p-12"><Loader2 className="w-8 h-8 animate-spin" /></div>;
+
+    if (!plan) {
+        return (
+            <div className="container mx-auto p-12 text-center space-y-4">
+                <h2 className="text-xl font-bold text-destructive">پلن انتخابی نامعتبر است.</h2>
+                <Button variant="link" onClick={() => navigate("/pricing")}>بازگشت به لیست قیمت‌ها</Button>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-gradient-to-b from-background to-muted/30 py-12">
@@ -285,7 +295,7 @@ export default function PaymentCheckout() {
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-muted-foreground">مدت اشتراک</span>
-                                    <span>۳۰ روز</span>
+                                    <span>{formatPrice(plan.durationDays)} روز</span>
                                 </div>
                                 <Separator />
                                 <div className="flex justify-between text-lg font-bold">

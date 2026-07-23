@@ -50,7 +50,6 @@ export default function PaymentPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     contentId: parseInt(id!),
-                    amount: content?.price || 0,
                     paymentMethod,
                     trackingCode: paymentMethod === "card" ? trackingCode : null,
                     transactionHash: paymentMethod === "crypto" ? transactionHash : null,

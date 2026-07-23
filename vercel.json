@@ -1,10 +1,6 @@
 {
     "rewrites": [
         {
-            "source": "/api/debug-db",
-            "destination": "/api/debug-db"
-        },
-        {
             "source": "/api/:match*",
             "destination": "/api"
         },

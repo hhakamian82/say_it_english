@@ -1,4 +1,6 @@
 
+import "dotenv/config";
+
 import pg from "pg";
 import fs from "fs";
 import path from "path";
@@ -6,8 +8,12 @@ import { fileURLToPath } from "url";
 
 const { Pool } = pg;
 
-// Using the verified connection string from reset-db.ts
-const CONNECTION_STRING = "postgresql://postgres.eomhzporbyhebawkmxyq:ManaPalm2025@aws-1-eu-north-1.pooler.supabase.com:6543/postgres";
+// Credentials come from .env.local / .env only — never committed (CLAUDE.md).
+const CONNECTION_STRING = process.env.DATABASE_URL;
+if (!CONNECTION_STRING) {
+    console.error("DATABASE_URL is not set. Put it in .env.local first.");
+    process.exit(1);
+}
 
 const pool = new Pool({
     connectionString: CONNECTION_STRING,

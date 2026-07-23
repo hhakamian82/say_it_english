@@ -9,7 +9,7 @@
     "build:server": "esbuild server/netlify.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --external:pg-native",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "db:push": "drizzle-kit push",
+    "db:push": "echo 'db:push is disabled — shared/schema.ts is missing 9 tables that exist in production (user_progress, badges, user_badges, saved_vocabulary, notifications, weekly_challenges, user_challenges, promo_codes, subscriptions) plus users.xp, so drizzle-kit push would DROP them. Re-enable only after shared/schema.ts is aligned with the live DB and push --dry-run shows no DROP. See gemini-proposal review 2026-07-22.' && exit 1",
     "db:seed": "tsx script/seed.ts",
     "db:check": "tsx script/test-db.ts",
     "db:reset": "tsx script/reset-db.ts"
