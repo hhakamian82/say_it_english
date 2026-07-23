@@ -65,12 +65,16 @@ const igDraftUpdateSchema = z.object({
   sentStatus: z.enum(['edited', 'sent', 'discarded']).optional(),
 });
 
+// No `amount` here on purpose: the price is always resolved server-side from PLANS/content/class.
+// nullish(), not optional(): every client sends `trackingCode: null` OR `transactionHash: null`
+// depending on the tab, and optional() rejects null — that 400'd every manual payment.
 const paymentSubmitSchema = z.object({
-  contentId: z.number().optional(),
-  classId: z.number().optional(),
-  amount: z.number().optional(),
-  trackingCode: z.string().optional(),
-  transactionHash: z.string().optional(),
+  contentId: z.number().nullish(),
+  classId: z.number().nullish(),
+  planId: z.string().max(20).nullish(),
+  promoCode: z.string().max(50).nullish(),
+  trackingCode: z.string().nullish(),
+  transactionHash: z.string().nullish(),
 });
 
 const classUpsertSchema = z.object({
@@ -185,7 +189,7 @@ function checkIgDraftAuth(req: VercelRequest): boolean {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 3, 
+  max: 1, // serverless: one connection per instance; Supabase pooler (6543) does the pooling
   connectionTimeoutMillis: 10000,
 });
 
@@ -198,6 +202,9 @@ const db = drizzle(pool);
 
 // ============ LOCAL SCHEMA DEFINITION ============
 // Manually defined to match DB structure and avoid circular dependencies
+// ponytail: duplicated with shared/schema.ts (~220 lines). Merging needs the live DB to verify
+// no column is dropped; the Supabase project was unreachable on 2026-07-23, so `db:push` is
+// disabled in package.json instead. Merge once the DB is back and push --dry-run shows no DROP.
 const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
@@ -419,6 +426,31 @@ const igDrafts = pgTable("ig_drafts", {
   sentStatus: text("sent_status").default("drafted").notNull(), // drafted | edited | sent | discarded
   category: text("category"),
 });
+
+// ============ SUBSCRIPTION PLANS (single source of truth) ============
+// Prices in Toman. Every consumer reads from here: the /api/payment/plans endpoint, the
+// ZarinPal amount, the manual-payment guard, and the two AI system prompts. Never retype a
+// number anywhere else — the old copies had drifted to a third of the real price and the
+// gateway was charging that (audit 2026-07-23).
+const PLANS = [
+  { id: 'bronze', name: 'برنزی', price: 299000, durationDays: 30, features: ['دسترسی به تمام ویدیوها', 'آزمون‌های نامحدود'] },
+  { id: 'silver', name: 'نقره‌ای', price: 599000, durationDays: 90, features: ['تمام امکانات برنزی', 'پشتیبانی اختصاصی', 'نشان نقره‌ای'] },
+  { id: 'gold', name: 'طلایی', price: 1299000, durationDays: 365, features: ['تمام امکانات نقره‌ای', 'مشاوره آنلاین', 'نشان طلایی'] },
+];
+
+const planById = (id?: string | null) => PLANS.find(p => p.id === id);
+
+// payments.referenceId doubles as the "which plan was this?" marker for non-gateway payments:
+// `PLAN-<id>` on manual submit, `PLAN-<id>-<ts>` as the ZarinPal seed before the authority
+// overwrites it. Both parse back through planFromReference.
+const PLAN_REF = 'PLAN-';
+const planFromReference = (ref?: string | null) =>
+  ref?.startsWith(PLAN_REF) ? planById(ref.slice(PLAN_REF.length).split('-')[0]) : undefined;
+
+// Same text block in both AI prompts, so a price change can't leak into only one of them.
+const PLANS_TEXT = PLANS
+  .map(p => `- ${p.name}: ${new Intl.NumberFormat('fa-IR').format(p.price)} تومان / ${p.durationDays} روز — ${p.features.join('، ')}`)
+  .join('\n');
 
 // ============ SMS HELPER (Async) ============
 async function sendSMS(phone: string, message: string) {
@@ -830,7 +862,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
       const parsed = paymentSubmitSchema.safeParse(body);
       if (!parsed.success) return res.status(400).json({ error: "اطلاعات پرداخت نامعتبر" });
-      const { contentId, classId, amount, trackingCode, transactionHash } = parsed.data;
+      const { contentId, classId, planId, promoCode, trackingCode, transactionHash } = parsed.data;
 
       // Group-class enrollment payment: price comes from the class, never the client
       if (classId) {
@@ -858,11 +890,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json(insertResults[0]);
       }
 
+      // Plan or single-content purchase — price from the server, never the client (same rule
+      // as the class branch above; `amount` used to be taken straight from the request body).
+      let amount: number;
+      let referenceId: string | null = null;
+      if (planId) {
+        const plan = planById(planId);
+        if (!plan) return res.status(400).json({ error: "پلن نامعتبر" });
+        amount = plan.price;
+        referenceId = `${PLAN_REF}${plan.id}`; // read back on approval to grant the subscription
+      } else if (contentId) {
+        const rows = await db.select().from(content).where(eq(content.id, contentId));
+        if (rows.length === 0) return res.status(404).json({ error: "محتوا یافت نشد" });
+        amount = rows[0].price || 0;
+      } else {
+        return res.status(400).json({ error: "محتوا یا پلن مشخص نشده" });
+      }
+
+      // Promo revalidated here too — mirrors the ZarinPal path
+      if (promoCode) {
+        const promo = await db.select().from(promoCodes).where(eq(promoCodes.code, promoCode.toUpperCase()));
+        if (promo.length > 0 && promo[0].isActive) {
+          amount = Math.round(amount * (1 - promo[0].discountPercent / 100));
+        }
+      }
+
       const insertResults = await db.insert(payments).values({
           userId: currentUser.id,
-          contentId: contentId || 0,
-          amount: amount || 0,
+          contentId: contentId || null,
+          amount,
           status: 'pending',
+          gateway: 'manual',
+          referenceId,
           trackingCode: trackingCode || transactionHash || 'N/A',
       }).returning();
 
@@ -907,6 +966,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             await db.insert(purchases).values({
                 userId: updatedPayment.userId,
                 contentId: updatedPayment.contentId
+            });
+          }
+          // Manual (card/crypto) plan payment — without this an approved card-to-card payer
+          // got no subscription at all; only the ZarinPal path created one.
+          const approvedPlan = planFromReference(updatedPayment.referenceId);
+          if (approvedPlan) {
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + approvedPlan.durationDays);
+            await db.insert(subscriptions).values({
+              userId: updatedPayment.userId,
+              planId: approvedPlan.id,
+              status: 'active',
+              endDate,
+              paymentId: updatedPayment.id,
             });
           }
           if (updatedPayment.classId) {
@@ -1431,11 +1504,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // --- PLANS: Get available subscription plans ---
     if (pathname.match(/\/api\/payment\/plans$/) && method === 'GET') {
-      return res.status(200).json([
-        { id: 'bronze', name: 'برنزی', price: 99000, durationDays: 30, features: ['دسترسی به تمام ویدیوها', 'آزمون‌های نامحدود'] },
-        { id: 'silver', name: 'نقره‌ای', price: 249000, durationDays: 90, features: ['تمام امکانات برنزی', 'پشتیبانی اختصاصی', 'نشان نقره‌ای'] },
-        { id: 'gold', name: 'طلایی', price: 890000, durationDays: 365, features: ['تمام امکانات نقره‌ای', 'مشاوره آنلاین', 'نشان طلایی'] },
-      ]);
+      return res.status(200).json(PLANS);
     }
 
     // --- SUBSCRIPTION: Get current status ---
@@ -1535,9 +1604,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         paymentClassId = parsedClassId;
       } else {
         // Subscription plan purchase (in Toman)
-        const plans: Record<string, number> = { 'bronze': 99000, 'silver': 249000, 'gold': 890000 };
-        amount = plans[planId];
-        if (!amount) return res.status(400).json({ error: "Plan invalid" });
+        const plan = planById(planId);
+        if (!plan) return res.status(400).json({ error: "Plan invalid" });
+        amount = plan.price;
 
         // Apply promo
         if (promoCode) {
@@ -1703,7 +1772,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Create Subscription
-      const durationDays = planId === 'gold' ? 365 : (planId === 'silver' ? 90 : 30);
+      const durationDays = planById(planId)?.durationDays ?? 30;
       const startDate = new Date();
       const endDate = new Date(startDate);
       endDate.setDate(endDate.getDate() + durationDays);
@@ -2179,9 +2248,7 @@ Respond ONLY with valid JSON in this exact structure:
 اطلاعات واقعی سایت که می‌تونی برای پاسخ به سوالات ازشون استفاده کنی:
 
 **پلن‌های اشتراک (صفحه /pricing):**
-- برنزی: ۹۹,۰۰۰ تومان / ۳۰ روز — دسترسی به تمام ویدیوها، آزمون‌های نامحدود
-- نقره‌ای: ۲۴۹,۰۰۰ تومان / ۹۰ روز — تمام امکانات برنزی + پشتیبانی اختصاصی + نشان نقره‌ای
-- طلایی: ۸۹۰,۰۰۰ تومان / ۳۶۵ روز — تمام امکانات نقره‌ای + مشاوره آنلاین + نشان طلایی
+${PLANS_TEXT}
 - پرداخت آنلاین از طریق درگاه زرین‌پال انجام می‌شود.
 
 **بخش‌های اصلی سایت:**
@@ -2273,7 +2340,8 @@ Respond ONLY with valid JSON in this exact structure:
 - لینک‌ها را همیشه کامل بنویس (پیام در اینستاگرام paste می‌شود و مسیر نسبی به درد نمی‌خورد).
 
 اطلاعات واقعی سایت:
-- پلن‌ها (https://say-it-english.vercel.app/pricing): برنزی ۹۹,۰۰۰ تومان / ۳۰ روز — تمام ویدیوها و آزمون‌های نامحدود؛ نقره‌ای ۲۴۹,۰۰۰ تومان / ۹۰ روز — برنزی + پشتیبانی اختصاصی؛ طلایی ۸۹۰,۰۰۰ تومان / ۳۶۵ روز — نقره‌ای + مشاورهٔ آنلاین. پرداخت آنلاین با زرین‌پال.
+- پلن‌ها (https://say-it-english.vercel.app/pricing) — پرداخت آنلاین با زرین‌پال:
+${PLANS_TEXT}
 - تست تعیین سطح رایگان: https://say-it-english.vercel.app/placement
 - کلاس‌های گروهی و ثبت‌نام: https://say-it-english.vercel.app/classes — زمان‌بندی و ظرفیت هر کلاس در همان صفحه است؛ عدد یا تاریخی خارج از آن نگو.
 - رزرو مشاوره یا کلاس خصوصی: https://say-it-english.vercel.app/bookings

@@ -104,18 +104,16 @@ export default function Checkout() {
     // Manual Payment Mutation (Card/Crypto)
     const manualPaymentMutation = useMutation({
         mutationFn: async () => {
-            const finalPrice = Math.round(selectedPlan!.price * (1 - discount / 100));
-
+            // planId + promoCode only: the server prices the plan and re-validates the promo
             const res = await fetch("/api/payments", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({
-                    contentId: 0, // 0 for subscription/plan
-                    amount: finalPrice,
-                    paymentMethod,
+                    planId: selectedPlan!.id,
+                    promoCode: appliedPromo?.code || undefined,
                     trackingCode: paymentMethod === "card" ? trackingCode : null,
                     transactionHash: paymentMethod === "crypto" ? transactionHash : null,
-                    notes: `Subscription Plan: ${selectedPlan!.name} (${selectedPlan!.id})`
                 }),
             });
             if (!res.ok) throw new Error("Failed to submit payment");
